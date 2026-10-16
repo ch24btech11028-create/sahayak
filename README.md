@@ -1,13 +1,14 @@
-# Sahayak — speak your form, in your language
+# Sahayak — show it any form, then just talk
 
-Millions of people can't fill English government forms. Sahayak asks the questions out loud in
-the user's language, understands answers spoken in mixed Hindi/Telugu/Tamil + English, and fills
-the form in English. Upload an ID card or marksheet and it pre-fills what it can, then only asks
-for the rest.
+Millions of people can't fill English government forms. Point Sahayak at any paper form: Sarvam
+Vision reads every blank on the page, then Sahayak asks about each one out loud in the user's
+language, understands answers spoken in mixed Hindi/Telugu/Tamil + English, and writes the form in
+English. Tick-box fields are ticked, sensitive fields (Aadhaar, bank) are left for the user's own hand,
+and an ID card or marksheet can pre-fill what it can.
 
-**Sarvam stack:** Saaras v4 (speech-to-text, `codemix`) · Sarvam-105B (the agent, structured JSON)
-· Bulbul v4 Flash (voice) · Mayura (translated field labels) · Transliterate (names → English)
-· Document AI Extract (pre-fill from documents).
+**Sarvam stack:** Sarvam Vision / Doc AI Extract (reads the form's fields; pre-fills from IDs) ·
+Saaras v4 (speech-to-text, `codemix`) · Sarvam-105B (the agent, forced tool call) · Bulbul v4 Flash
+(voice) · Mayura (field labels and the scan instruction in the user's language) · Transliterate.
 
 ## Run it
 
@@ -24,6 +25,9 @@ Without a key the app runs in **mock mode** (canned speech/LLM/voice) so the UI 
 ## How a turn works
 
 ```
+camera / photo / PDF ─► POST /api/form/scan ─► Sarvam Vision: title, blanks, tick-box options
+                                            └─► field kinds (name/date/phone/number/choice/sensitive)
+
 mic (MediaRecorder webm) ─► POST /api/turn ─► Saaras v4 codemix ─► Sarvam-105B (JSON: updates, reply, done)
                                                                └─► transliterate names → form values
                          ◄── reply text + Bulbul WAV + updated form state + timings ◄──┘
@@ -37,11 +41,13 @@ the read-back.
 
 | Path | What |
 |---|---|
-| `app/config.py` | The form (6 fields), languages and voices |
+| `app/config.py` | The sample form (6 fields), languages and voices |
+| `app/forms.py` | Turns a Sarvam Vision scan into a fillable form: keys, kinds, validation hints |
 | `app/sarvam.py` | One function per Sarvam call, each with a mock fallback |
 | `app/agent.py` | Session state, system prompt, turn logic |
-| `app/main.py` | FastAPI routes: `/api/session`, `/api/turn`, `/api/document`, field edits |
-| `static/` | Single-page UI: language picker, push-to-talk, live paper form, print to PDF |
+| `app/main.py` | FastAPI routes: `/api/form/scan`, `/api/session` (sample), `/api/turn`, `/api/document`, `/api/instruction` |
+| `static/` | Single-page UI: language picker, camera scan, push-to-talk, live paper form, print to PDF |
+| `samples/` | A blank income-certificate form and a marksheet to test scanning and pre-fill |
 | `scripts/smoke_test.py` | Verifies the key and every API before the build hour |
 
 ## Build-hour ideas (pick 1–2)

@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from . import agent, config, sarvam
+from . import agent, config, forms, sarvam
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
 app = FastAPI(title="Sahayak")
@@ -41,6 +41,24 @@ def get_config():
                           for c, l in config.LANGUAGES.items()]}
 
 
+_instruction_cache: dict[str, dict] = {}
+INSTRUCTION = "Hold your form in front of the camera so the whole page is visible, then press the button."
+
+
+@app.get("/api/instruction")
+def instruction(lang: str = "hi-IN"):
+    """The scan instruction, translated and spoken, for people who can't read the English UI."""
+    if lang not in config.LANGUAGES:
+        raise HTTPException(400, f"Unsupported language {lang}")
+    if lang not in _instruction_cache:
+        try:
+            text = sarvam.translate(INSTRUCTION, lang)
+            _instruction_cache[lang] = {"text": text, "audio_b64": sarvam.speak(text, lang)}
+        except Exception as e:
+            return {"text": INSTRUCTION, "audio_b64": None, "error": str(e)}
+    return _instruction_cache[lang]
+
+
 class StartBody(BaseModel):
     lang: str = "hi-IN"
 
@@ -49,8 +67,41 @@ class StartBody(BaseModel):
 def start_session(body: StartBody):
     if body.lang not in config.LANGUAGES:
         raise HTTPException(400, f"Unsupported language {body.lang}")
-    s = agent.create_session(body.lang)
+    s = agent.create_session(body.lang, forms.sample_form())
     return _respond(s, agent.run_turn(s, "(start)"), {})
+
+
+ALLOWED_DOCS = {"application/pdf", "image/png", "image/jpeg"}
+
+
+def _read_upload(file: UploadFile) -> tuple[bytes, str, str]:
+    data = file.file.read()
+    ctype = (file.content_type or "").split(";")[0]
+    if ctype not in ALLOWED_DOCS:
+        raise HTTPException(400, "Use a photo (JPG or PNG) or a PDF of up to 10 pages.")
+    if not data:
+        raise HTTPException(400, "The file is empty.")
+    return data, file.filename or "document", ctype
+
+
+@app.post("/api/form/scan")
+def scan_form(lang: str = Form("hi-IN"), file: UploadFile = File(...)):
+    """Photograph any paper form: Sarvam Vision lists its fields, then the agent asks for them."""
+    if lang not in config.LANGUAGES:
+        raise HTTPException(400, f"Unsupported language {lang}")
+    data, name, ctype = _read_upload(file)
+    t = time.time()
+    try:
+        result = sarvam.scan_form(data, name, ctype)
+    except Exception as e:
+        raise HTTPException(502, f"Sarvam Vision could not read the form: {e}")
+    form, prefilled = forms.from_scan(result)
+    if not form["fields"]:
+        raise HTTPException(422, "No fillable fields were found. Retake the photo with the whole form "
+                                 "in view and good light.")
+    timings = {"scan_s": round(time.time() - t, 2)}
+    s = agent.create_session(lang, form, prefilled)
+    return _respond(s, agent.run_turn(s, "(start)"), timings)
 
 
 @app.post("/api/turn")
@@ -82,10 +133,10 @@ def voice_turn(session_id: str = Form(...), audio: UploadFile | None = File(None
 def upload_document(session_id: str = Form(...), file: UploadFile = File(...)):
     """Pre-fill the form from an ID card / marksheet photo or PDF using Doc AI Extract."""
     s = _get(session_id)
+    data, name, ctype = _read_upload(file)
     t = time.time()
     try:
-        found = sarvam.extract_fields(file.file.read(), file.filename or "document.pdf",
-                                      file.content_type or "application/pdf", config.FORM["fields"])
+        found = sarvam.extract_fields(data, name, ctype, s["form"]["fields"])
     except Exception as e:
         raise HTTPException(502, f"Document reading failed: {e}")
     timings = {"doc_s": round(time.time() - t, 2)}
@@ -109,7 +160,7 @@ class FieldEdit(BaseModel):
 def edit_field(sid: str, body: FieldEdit):
     """Manual correction from the UI (tap a field and edit it)."""
     s = _get(sid)
-    if body.field not in config.FIELD_KEYS:
+    if not any(f["key"] == body.field for f in s["form"]["fields"]):
         raise HTTPException(400, "Unknown field")
     s["values"][body.field] = body.value.strip()
     s["history"].append({"role": "user", "content": f"(I edited {body.field} to {body.value.strip()} myself.)"})

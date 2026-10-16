@@ -35,10 +35,64 @@
   <svg class="watermark" aria-hidden="true"><use href="#rosette"/></svg>
   <div class="brand"><span class="mark">स</span> Sahayak</div>
   <h1>Fill your form by speaking.</h1>
-  <p class="lede">Choose your language. Sahayak asks one question at a time, listens to your answer, and writes it on the <span id="form-title-welcome"></span> for you.</p>
+  <p class="lede">Choose your language, then show Sahayak any paper form. It asks one question at a time, listens to your answer, and writes it on the form for you.</p>
   <div id="lang-grid" class="lang-grid" role="list"></div>
   <p class="foot">Works with mixed speech like “मेरा mobile number है…”. Powered by Sarvam AI.</p>
 </section>
+
+<!-- Step 2: show Sahayak the form -->
+<section id="start" class="start" hidden>
+  <div class="start-copy">
+    <button id="back" class="link-btn dark">Change language</button>
+    <h1>Show Sahayak your form.</h1>
+    <p id="instruction" class="instruction" aria-live="polite"></p>
+    <p class="lede small">Sarvam Vision reads every blank on the page, then Sahayak asks you about each one in your language.</p>
+    <div class="start-actions">
+      <button id="open-camera" class="primary-btn">Scan with camera</button>
+      <label class="secondary-btn">
+        <input id="form-file" type="file" accept="application/pdf,image/png,image/jpeg">
+        <span>Upload a photo or PDF</span>
+      </label>
+    </div>
+    <p class="no-form">No form with you?
+      <button id="try-photo" class="link-btn dark">Scan a sample photo</button> or
+      <button id="use-sample" class="link-btn dark">fill the sample scholarship form</button></p>
+  </div>
+  <figure class="start-art" aria-hidden="true">
+    <div class="art-sheet">
+      <span></span><span></span><span class="short"></span><span></span><span class="short"></span>
+    </div>
+    <div class="art-frame"><i></i><i></i><i></i><i></i></div>
+  </figure>
+</section>
+
+<!-- Camera: live view with a guide frame -->
+<div id="camera" class="overlay" hidden role="dialog" aria-modal="true" aria-label="Scan with camera">
+  <div class="viewfinder">
+    <video id="video" playsinline muted></video>
+    <div class="guide"><i></i><i></i><i></i><i></i></div>
+    <p id="camera-msg" class="camera-msg">Fit the whole page inside the frame</p>
+  </div>
+  <div class="camera-bar">
+    <button id="camera-cancel" class="link-btn">Cancel</button>
+    <button id="shutter" class="shutter" aria-label="Take photo"></button>
+    <label class="link-btn">
+      <input id="camera-file" type="file" accept="application/pdf,image/png,image/jpeg">
+      <span>Upload instead</span>
+    </label>
+  </div>
+</div>
+
+<!-- Scanning: the photo with a sweeping line while Sarvam Vision reads it -->
+<div id="scanning" class="overlay scanning" hidden aria-live="polite">
+  <div class="scan-photo">
+    <img id="scan-img" alt="">
+    <div id="scan-pdf" class="scan-pdf" hidden>PDF</div>
+    <div class="scan-line"></div>
+  </div>
+  <p id="scan-text" class="scan-text">Sarvam Vision is reading your form</p>
+  <button id="scan-retry" class="primary-btn" hidden>Try another photo</button>
+</div>
 
 <!-- Workspace: voice on the left, the form on the right -->
 <main id="workspace" class="workspace" hidden>
@@ -69,10 +123,7 @@
         <button type="submit">Send</button>
       </form>
       <div class="controls-row">
-        <label class="upload">
-          <input id="doc-input" type="file" accept="application/pdf,image/png,image/jpeg">
-          <span>Fill from a document</span>
-        </label>
+        <button id="id-scan" class="link-btn">Fill from my ID or marksheet</button>
         <span id="timings" class="timings" title="Time taken by each Sarvam model"></span>
       </div>
     </div>
@@ -83,7 +134,7 @@
       <header class="paper-head">
         <svg class="seal" aria-hidden="true"><use href="#rosette"/></svg>
         <div>
-          <p class="dept">Department of Social Welfare, Form S-1</p>
+          <p id="dept" class="dept"></p>
           <h2 id="form-title"></h2>
         </div>
         <p id="progress-text" class="progress-text"></p>

@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app import agent, config, sarvam  # noqa: E402
+from app import agent, config, forms, sarvam  # noqa: E402
 
 OUT = Path(__file__).resolve().parent.parent / "samples" / "out"
 results = []
@@ -55,7 +55,7 @@ def main():
     check("STT round-trip (saaras:v4 codemix)", stt)
 
     def chat():
-        s = agent.create_session("hi-IN")
+        s = agent.create_session("hi-IN", forms.sample_form())
         first = agent.run_turn(s, "(start)")
         if first.get("error"):
             raise RuntimeError(first["error"])
@@ -64,6 +64,14 @@ def main():
             raise RuntimeError(second["error"])
         return f"greeting={first['reply']!r} | values={json.dumps(s['values'], ensure_ascii=False)} | next={second['reply']!r}"
     check("agent turns (sarvam-105b JSON)", chat)
+
+    def scan():
+        path = Path(__file__).resolve().parent.parent / "samples" / "sample_blank_form.png"
+        form, _ = forms.from_scan(sarvam.scan_form(path.read_bytes(), path.name, "image/png"))
+        if not form["fields"]:
+            raise RuntimeError("no fields found")
+        return f"{form['title']!r}: " + ", ".join(f"{f['label']} [{f['kind']}]" for f in form["fields"])
+    check("form scan (Sarvam Vision)", scan)
 
     if len(sys.argv) >= 3 and sys.argv[1] == "doc":
         path = Path(sys.argv[2])

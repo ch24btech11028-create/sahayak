@@ -152,6 +152,86 @@ code { font-size: .85em; background: #0001; padding: 1px 5px; border-radius: 4px
 .stamp.land { animation: stamp .45s cubic-bezier(.2, 1.4, .4, 1) both; }
 @keyframes stamp { from { transform: rotate(-24deg) scale(2.2); opacity: 0; } to { transform: rotate(-14deg) scale(1); opacity: .88; } }
 
+/* ------------------------------------------------------------ step 2: show the form */
+.link-btn.dark { color: var(--teal); }
+.start { min-height: 100vh; max-width: 1180px; margin: 0 auto; padding: 40px 28px; display: grid;
+  grid-template-columns: 1.1fr .9fr; gap: 48px; align-items: center; }
+.start h1 { font-size: clamp(38px, 5.2vw, 70px); line-height: 1; font-weight: 700; font-stretch: 118%;
+  letter-spacing: -.02em; margin: 26px 0 18px; max-width: 11ch; }
+.instruction { font-size: 23px; line-height: 1.4; font-weight: 500; color: var(--violet); margin: 0 0 14px;
+  max-width: 34ch; min-height: 1.4em; }
+.no-form { font-size: 16px; margin: 0; }
+.no-form .link-btn { font-size: 16px; padding: 0 2px; }
+.lede.small { font-size: 17px; margin-bottom: 30px; }
+.start-actions { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 22px; }
+.primary-btn, .secondary-btn { display: inline-flex; align-items: center; gap: 10px; border-radius: 12px;
+  padding: 15px 24px; font-size: 18px; font-weight: 600; cursor: pointer; }
+.primary-btn { background: var(--violet); color: #fff; border: 0; }
+.primary-btn:hover { background: #4a1f9c; }
+.secondary-btn { background: var(--sheet); color: var(--teal); border: 2px solid var(--teal); }
+.secondary-btn:hover { background: #fff; }
+.secondary-btn input, .camera-bar input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.secondary-btn:focus-within { outline: 3px solid var(--marigold); outline-offset: 2px; }
+
+.start-art { position: relative; margin: 0; aspect-ratio: 3 / 4; max-height: 74vh; justify-self: center; width: 100%;
+  max-width: 420px; }
+.art-sheet { position: absolute; inset: 9% 12%; background: var(--sheet); border: 1px solid var(--rule);
+  transform: rotate(-4deg); box-shadow: 0 30px 50px -30px #0e3b4380; padding: 16% 12%; display: flex;
+  flex-direction: column; gap: 13%; }
+.art-sheet span { height: 2px; background: var(--rule); position: relative; }
+.art-sheet span::before { content: ""; position: absolute; left: 0; bottom: 6px; width: 34%; height: 8px;
+  background: #b8d0c180; border-radius: 4px; }
+.art-sheet span.short { width: 62%; }
+.art-frame i, .guide i { position: absolute; width: 44px; height: 44px; border: 0 solid var(--violet); }
+.art-frame { position: absolute; inset: 2%; }
+.art-frame i:nth-child(1), .guide i:nth-child(1) { top: 0; left: 0; border-top-width: 5px; border-left-width: 5px; }
+.art-frame i:nth-child(2), .guide i:nth-child(2) { top: 0; right: 0; border-top-width: 5px; border-right-width: 5px; }
+.art-frame i:nth-child(3), .guide i:nth-child(3) { bottom: 0; left: 0; border-bottom-width: 5px; border-left-width: 5px; }
+.art-frame i:nth-child(4), .guide i:nth-child(4) { bottom: 0; right: 0; border-bottom-width: 5px; border-right-width: 5px; }
+
+/* ------------------------------------------------------------ camera + scanning overlays */
+.overlay { position: fixed; inset: 0; z-index: 20; background: #071d21; color: #fff; display: flex;
+  flex-direction: column; }
+.viewfinder { position: relative; flex: 1; overflow: hidden; display: grid; place-items: center; }
+.viewfinder video { width: 100%; height: 100%; object-fit: cover; }
+.guide { position: absolute; inset: 7% 18%; pointer-events: none; }
+.guide i { border-color: #fff; }
+.camera-msg { position: absolute; bottom: 18px; left: 0; right: 0; text-align: center; margin: 0; font-size: 18px;
+  text-shadow: 0 1px 6px #000; }
+.camera-bar { display: grid; grid-template-columns: 1fr auto 1fr; align-items: center; padding: 18px 28px 26px; }
+.camera-bar > :last-child { justify-self: end; }
+.camera-bar .link-btn { color: #fff; font-size: 16px; position: relative; cursor: pointer; }
+.shutter { width: 78px; height: 78px; border-radius: 50%; background: #fff; border: 6px solid #ffffff55;
+  background-clip: padding-box; }
+.shutter:hover { transform: scale(1.05); }
+
+.scanning { align-items: center; justify-content: center; gap: 22px; padding: 24px; background: var(--teal); }
+.scan-photo { position: relative; max-width: min(520px, 90vw); max-height: 68vh; overflow: hidden;
+  box-shadow: 0 30px 60px -30px #000; background: var(--sheet); }
+.scan-photo img { display: block; max-width: 100%; max-height: 68vh; }
+.scan-pdf { width: 300px; height: 400px; display: grid; place-items: center; color: var(--teal); font-size: 40px;
+  font-weight: 700; }
+.scan-line { position: absolute; left: 0; right: 0; height: 22%; top: -22%;
+  background: linear-gradient(to bottom, transparent, #5b2bb533 70%, #8f6bff); border-bottom: 2px solid #b9a2ff;
+  animation: sweep 1.8s ease-in-out infinite; }
+.scanning.failed .scan-line { display: none; }
+@keyframes sweep { from { top: -22%; } to { top: 100%; } }
+.scan-text { margin: 0; font-size: 22px; font-weight: 500; text-align: center; max-width: 34ch; }
+
+/* ------------------------------------------------------------ choice and sensitive fields */
+.f-choices { grid-column: 2; display: flex; flex-wrap: wrap; gap: 6px 22px; padding: 8px 2px 2px; }
+.f-choices button { background: none; border: 0; display: inline-flex; align-items: center; gap: 8px;
+  font-size: 17px; padding: 2px 0; color: var(--teal); }
+.f-choices .box { width: 22px; height: 22px; border: 2px solid var(--teal); display: grid; place-items: center;
+  font-family: var(--hand); font-size: 24px; line-height: 1; color: var(--violet); }
+.f-choices button[aria-pressed="true"] { color: var(--violet); font-weight: 600; }
+.f-choices button[aria-pressed="true"] .box::after { content: "✓"; transform: translate(2px, -3px); }
+.f-choices.writing .box { animation: write .6s both; }
+.f-own { grid-column: 2; margin-top: 6px; padding: 8px 10px; border: 1px dashed var(--rule); font-size: 14px;
+  color: var(--teal-2); }
+.dept a, .dept button { color: var(--teal); background: none; border: 0; padding: 0; text-decoration: underline;
+  text-underline-offset: 2px; font-size: inherit; margin-left: 6px; }
+
 /* ------------------------------------------------------------ responsive, motion, print */
 @media (max-width: 900px) {
   .workspace { grid-template-columns: 1fr; }
@@ -168,6 +248,9 @@ code { font-size: .85em; background: #0001; padding: 1px 5px; border-radius: 4px
   .stamp-big { font-size: 20px; }
   .welcome { padding: 28px 18px 48px; }
   .welcome h1 { margin-top: 40px; }
+  .start { grid-template-columns: 1fr; gap: 20px; padding: 24px 18px 40px; min-height: auto; }
+  .start-art { display: none; }
+  .guide { inset: 10% 6%; }
   .lang-grid { grid-template-columns: 1fr 1fr; }
   .lang-grid button { padding: 14px 10px 12px; }
 }

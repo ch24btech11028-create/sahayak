@@ -18,29 +18,59 @@ async function api(path, opts = {}) {
   return data;
 }
 
-// ------------------------------------------------------------------ boot
+// ------------------------------------------------------------------ boot: pick a language
+let lang = null;
+
 (async function boot() {
   const cfg = await api("/api/config");
   $("mock-banner").hidden = !cfg.mock;
-  $("form-title-welcome").textContent = cfg.form_title;
   for (const l of cfg.languages) {
     const b = document.createElement("button");
     b.setAttribute("role", "listitem");
     b.innerHTML = `<span class="speak"></span><span class="lname"></span>`;
     b.querySelector(".speak").textContent = l.speak;
     b.querySelector(".lname").textContent = l.code === "en-IN" ? "English" : `${l.name}, ${l.english}`;
-    b.onclick = () => start(l);
+    b.onclick = () => chooseLanguage(l);
     $("lang-grid").append(b);
   }
 })();
 
-async function start(lang) {
+// ------------------------------------------------------------------ step 2: show the form
+async function chooseLanguage(l) {
+  lang = l;
   $("welcome").hidden = true;
+  $("start").hidden = false;
+  $("instruction").textContent = "";
+  try {
+    const ins = await api(`/api/instruction?lang=${l.code}`);
+    $("instruction").textContent = ins.text;
+    if (ins.audio_b64) { $("player").src = `data:audio/wav;base64,${ins.audio_b64}`; $("player").play().catch(() => {}); }
+  } catch { /* the English copy on screen still explains the step */ }
+}
+$("back").onclick = () => { $("player").pause(); $("start").hidden = true; $("welcome").hidden = false; };
+$("use-sample").onclick = () => startSample();
+$("try-photo").onclick = async () => {
+  const blob = await (await fetch("/static/sample-income-form.png")).blob();
+  processDoc(new File([blob], "sample-income-form.png", { type: "image/png" }), "form");
+};
+$("open-camera").onclick = () => openCamera("form");
+$("form-file").onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) processDoc(f, "form"); };
+
+function enterWorkspace() {
+  $("player").pause();
+  $("welcome").hidden = true;
+  $("start").hidden = true;
   $("workspace").hidden = false;
   $("lang-pill").textContent = lang.code === "en-IN" ? "English" : `${lang.name} (${lang.english})`;
   $("stamp-local").textContent = COMPLETE[lang.code] || "";
   $("chat").innerHTML = "";
   $("question").textContent = "";
+  wasDone = false;
+}
+
+async function startSample() {
+  scanUrl = null;
+  enterWorkspace();
   setBusy(true, "Getting your form ready");
   try {
     handle(await api("/api/session", {
@@ -49,6 +79,94 @@ async function start(lang) {
     }));
   } catch (e) { addMsg("err", e.message); setBusy(false, "Tap the mic to answer"); }
 }
+
+// ------------------------------------------------------------------ camera
+let camStream = null;
+let camPurpose = "form";
+
+async function openCamera(purpose) {
+  camPurpose = purpose;
+  $("player").pause();
+  $("camera").hidden = false;
+  $("camera-msg").textContent = purpose === "id"
+    ? "Fit your ID card or marksheet inside the frame" : "Fit the whole page inside the frame";
+  $("shutter").disabled = true;
+  try {
+    camStream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1440 } }, audio: false,
+    });
+    $("video").srcObject = camStream;
+    await $("video").play();
+    $("shutter").disabled = false;
+  } catch {
+    $("camera-msg").textContent = "The camera is not available here. Use “Upload instead” to choose a photo.";
+  }
+}
+
+function closeCamera() {
+  camStream?.getTracks().forEach((t) => t.stop());
+  camStream = null;
+  $("video").srcObject = null;
+  $("camera").hidden = true;
+}
+
+$("camera-cancel").onclick = closeCamera;
+$("camera-file").onchange = (e) => {
+  const f = e.target.files[0]; e.target.value = "";
+  if (f) { closeCamera(); processDoc(f, camPurpose); }
+};
+$("shutter").onclick = () => {
+  const v = $("video");
+  if (!v.videoWidth) return;
+  const c = document.createElement("canvas");
+  c.width = v.videoWidth; c.height = v.videoHeight;
+  c.getContext("2d").drawImage(v, 0, 0);
+  c.toBlob((blob) => { closeCamera(); processDoc(new File([blob], "scan.jpg", { type: "image/jpeg" }), camPurpose); },
+    "image/jpeg", 0.92);
+};
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("camera").hidden) closeCamera(); });
+
+// ------------------------------------------------------------------ scanning (form or ID)
+let scanUrl = null;
+
+async function processDoc(file, purpose) {
+  const url = URL.createObjectURL(file);
+  const isPdf = file.type === "application/pdf";
+  $("scan-img").hidden = isPdf;
+  $("scan-pdf").hidden = !isPdf;
+  if (!isPdf) $("scan-img").src = url;
+  $("scanning").classList.remove("failed");
+  $("scan-retry").hidden = true;
+  $("scan-text").textContent = purpose === "form"
+    ? "Sarvam Vision is reading the blanks on your form" : "Sarvam Vision is reading your document";
+  $("scanning").hidden = false;
+
+  const fd = new FormData();
+  fd.append("file", file, file.name || "scan.jpg");
+  try {
+    let r;
+    if (purpose === "form") {
+      fd.append("lang", lang.code);
+      r = await api("/api/form/scan", { method: "POST", body: fd });
+      scanUrl = url;
+      enterWorkspace();
+      $("scanning").hidden = true;
+      addMsg("sys", `Found ${r.state.form.fields.length} blanks on your form`);
+    } else {
+      fd.append("session_id", session.id);
+      r = await api("/api/document", { method: "POST", body: fd });
+      $("scanning").hidden = true;
+    }
+    handle(r);
+  } catch (e) {
+    $("scanning").classList.add("failed");
+    $("scan-text").textContent = e.message;
+    $("scan-retry").hidden = false;
+    $("scan-retry").onclick = () => { $("scanning").hidden = true; if (purpose === "id") setBusy(false, nextPrompt()); };
+  }
+}
+$("id-scan").onclick = () => { if (session && !busy) openCamera("id"); };
+
 $("restart").onclick = () => location.reload();
 
 // ------------------------------------------------------------------ rendering
@@ -63,7 +181,13 @@ function addMsg(kind, text) {
 function renderForm(state, changed = []) {
   session = state;
   $("form-title").textContent = state.form.title;
-  const firstMissing = state.form.fields.find((f) => !state.values[f.key]);
+  $("dept").textContent = state.scanned ? "Read from your photo by Sarvam Vision" : "Department of Social Welfare, Form S-1 (sample)";
+  if (state.scanned && scanUrl) {
+    const view = document.createElement("a");
+    view.href = scanUrl; view.target = "_blank"; view.rel = "noopener"; view.textContent = "View photo";
+    $("dept").append(view);
+  }
+  const firstMissing = state.form.fields.find((f) => f.kind !== "sensitive" && !state.values[f.key]);
   $("fields").innerHTML = "";
   for (const f of state.form.fields) {
     const li = document.createElement("li");
@@ -79,6 +203,30 @@ function renderForm(state, changed = []) {
       label.append(local);
     }
 
+    if (f.kind === "sensitive") {
+      const own = document.createElement("div");
+      own.className = "f-own";
+      own.textContent = "Write this yourself on the paper form. Sahayak never asks for it.";
+      li.append(label, own);
+      $("fields").append(li);
+      continue;
+    }
+    if (f.kind === "choice") {
+      const box = document.createElement("div");
+      box.className = "f-choices" + (changed.includes(f.key) ? " writing" : "");
+      for (const o of f.options) {
+        const btn = document.createElement("button");
+        btn.type = "button";
+        btn.setAttribute("aria-pressed", String(state.values[f.key] === o));
+        btn.innerHTML = `<span class="box"></span><span></span>`;
+        btn.lastChild.textContent = o;
+        btn.onclick = () => saveEdit(f.key, o);
+        box.append(btn);
+      }
+      li.append(label, box);
+      $("fields").append(li);
+      continue;
+    }
     const v = document.createElement("div");
     v.className = "f-value";
     v.contentEditable = "true";
@@ -93,8 +241,9 @@ function renderForm(state, changed = []) {
     li.append(label, v);
     $("fields").append(li);
   }
-  const total = state.form.fields.length;
-  const filled = state.form.fields.filter((f) => state.values[f.key]).length;
+  const askable = state.form.fields.filter((f) => f.kind !== "sensitive");
+  const total = askable.length;
+  const filled = askable.filter((f) => state.values[f.key]).length;
   $("progress-text").innerHTML = `<b>${filled}/${total}</b>answered`;
 
   $("stamp").hidden = !state.done;
@@ -130,7 +279,7 @@ function handle(r) {
 
   renderForm(r.state, r.changed || []);
   const t = r.timings || {};
-  const names = { stt_s: "Listening", doc_s: "Reading", llm_s: "Thinking", tts_s: "Voice" };
+  const names = { scan_s: "Scanning", stt_s: "Listening", doc_s: "Reading", llm_s: "Thinking", tts_s: "Voice" };
   $("timings").textContent = Object.keys(names).filter((k) => t[k] != null)
     .map((k) => `${names[k]} ${t[k]}s`).join(", ");
 
@@ -222,19 +371,6 @@ $("text-form").onsubmit = async (e) => {
   fd.append("session_id", session.id);
   fd.append("text", text);
   await turn(fd, "Thinking");
-};
-
-$("doc-input").onchange = async (e) => {
-  const file = e.target.files[0];
-  e.target.value = "";
-  if (!file || !session) return;
-  addMsg("sys", `Reading ${file.name}`);
-  const fd = new FormData();
-  fd.append("session_id", session.id);
-  fd.append("file", file);
-  setBusy(true, "Reading your document");
-  try { handle(await api("/api/document", { method: "POST", body: fd })); }
-  catch (err) { addMsg("err", err.message); setBusy(false, nextPrompt()); }
 };
 
 $("print").onclick = () => window.print();

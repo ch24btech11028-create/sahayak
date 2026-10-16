@@ -145,17 +145,8 @@ def chat_json(messages: list, schema: dict) -> dict:
 
 # ---------------------------------------------------------------- document AI
 
-def extract_fields(document: bytes, filename: str, content_type: str, fields: list) -> dict:
-    """Doc AI Extract: pull any form fields that appear in an uploaded ID/marksheet."""
-    if config.MOCK:
-        time.sleep(1.0)
-        return {"student_name": "Ravi Kumar", "date_of_birth": "12/03/2003"}
-    schema = {
-        "type": "object",
-        "properties": {
-            f["key"]: {"type": "string", "description": f"{f['label']}. {f['hint']}"} for f in fields
-        },
-    }
+def _vision_extract(document: bytes, filename: str, content_type: str, schema: dict) -> dict:
+    """Run one Sarvam Vision (Doc AI Extract) job and wait for its structured result."""
     c = client()
     job = c.doc_ai.extract(
         file=[(filename, document, content_type)],  # a list, even for one file
@@ -164,14 +155,34 @@ def extract_fields(document: bytes, filename: str, content_type: str, fields: li
     )
     deadline = time.time() + 90
     while True:
-        st = c.doc_ai.get_status(job_id=job.job_id)
-        status = st.status.lower()
+        status = c.doc_ai.get_status(job_id=job.job_id).status.lower()
         if status in ("completed", "partially_completed"):
             break
         if status in ("failed", "rejected"):
-            raise RuntimeError(f"Document extraction {status}")
+            raise RuntimeError(f"Sarvam Vision could not read this document ({status})")
         if time.time() > deadline:
-            raise TimeoutError("Document extraction took too long")
-        time.sleep(3)
-    result = c.doc_ai.get_results(job_id=job.job_id).result or {}
+            raise TimeoutError("Reading the document took too long")
+        time.sleep(1.5)
+    return c.doc_ai.get_results(job_id=job.job_id).result or {}
+
+
+def scan_form(document: bytes, filename: str, content_type: str) -> dict:
+    """Read a blank (or part-filled) form: its title, its fields, and tick-box options."""
+    from . import forms
+
+    if config.MOCK:
+        time.sleep(2.0)
+        return forms.MOCK_SCAN
+    return _vision_extract(document, filename, content_type, forms.SCAN_SCHEMA)
+
+
+def extract_fields(document: bytes, filename: str, content_type: str, fields: list) -> dict:
+    """Pull values for the form's fields out of an ID card, marksheet or certificate."""
+    if config.MOCK:
+        time.sleep(1.0)
+        return {fields[0]["key"]: "Ravi Kumar"} if fields else {}
+    asked = [f for f in fields if f.get("kind") != "sensitive"]
+    schema = {"type": "object", "properties": {
+        f["key"]: {"type": "string", "description": f"{f['label']}. {f['hint']}"} for f in asked}}
+    result = _vision_extract(document, filename, content_type, schema)
     return {k: str(v).strip() for k, v in result.items() if v not in (None, "", [], {})}
