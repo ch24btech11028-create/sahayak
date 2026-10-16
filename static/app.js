@@ -1,101 +1,101 @@
-// Sahayak frontend: pick a language → push-to-talk turns → answers write themselves onto the form.
+// Sahayak: choose a language → scan a paper form → answer by voice → the form fills itself.
+
 const $ = (id) => document.getElementById(id);
-let session = null;
-let recorder = null;
-let chunks = [];
-let busy = false;
-let lastAudio = null;
-let wasDone = false;
 
-// "Complete" in each script, for the rubber stamp.
-const COMPLETE = { "hi-IN": "पूर्ण", "mr-IN": "पूर्ण", "te-IN": "పూర్తి", "ta-IN": "முடிந்தது", "kn-IN": "ಪೂರ್ಣ",
-  "bn-IN": "সম্পূর্ণ", "gu-IN": "પૂર્ણ", "pa-IN": "ਪੂਰਾ", "ml-IN": "പൂർത്തിയായി", "od-IN": "ସମ୍ପୂର୍ଣ୍ଣ", "en-IN": "" };
+const state = {
+  lang: null,        // language from /api/config
+  session: null,     // latest session state from the server
+  busy: false,       // a request or recording is in progress
+  recorder: null,
+  chunks: [],
+  camera: null,      // { stream, purpose: "form" | "id" }
+  lastAudio: null,
+  scanUrl: null,     // object URL of the scanned photo, for "View photo"
+  wasDone: false,
+};
 
-async function api(path, opts = {}) {
-  const res = await fetch(path, opts);
+const SAMPLE_PHOTO = "/static/sample-income-form.png";
+const STAGE_NAMES = { scan_s: "Scanning", doc_s: "Reading", stt_s: "Listening", llm_s: "Thinking", tts_s: "Voice" };
+
+// ------------------------------------------------------------------ helpers
+async function api(path, options = {}) {
+  const res = await fetch(path, options);
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.detail || `Request failed (${res.status})`);
   return data;
 }
 
-// ------------------------------------------------------------------ boot: pick a language
-let lang = null;
+function form(fields) {
+  const fd = new FormData();
+  for (const [k, v] of Object.entries(fields)) fd.append(k, v);
+  return fd;
+}
 
+function show(screen) {
+  for (const id of ["welcome", "start", "workspace"]) $(id).hidden = id !== screen;
+}
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text != null) node.textContent = text;
+  return node;
+}
+
+const languageLabel = (l) => (l.code === "en-IN" ? "English" : `${l.name} (${l.english})`);
+
+// ------------------------------------------------------------------ 1. choose a language
 (async function boot() {
-  const cfg = await api("/api/config");
-  $("mock-banner").hidden = !cfg.mock;
-  for (const l of cfg.languages) {
-    const b = document.createElement("button");
+  const { languages } = await api("/api/config");
+  for (const l of languages) {
+    const b = el("button");
     b.setAttribute("role", "listitem");
-    b.innerHTML = `<span class="speak"></span><span class="lname"></span>`;
-    b.querySelector(".speak").textContent = l.speak;
-    b.querySelector(".lname").textContent = l.code === "en-IN" ? "English" : `${l.name}, ${l.english}`;
+    b.append(el("span", "speak", l.speak), el("span", "lname", l.code === "en-IN" ? "English" : `${l.name}, ${l.english}`));
     b.onclick = () => chooseLanguage(l);
     $("lang-grid").append(b);
   }
 })();
 
-// ------------------------------------------------------------------ step 2: show the form
 async function chooseLanguage(l) {
-  lang = l;
-  $("welcome").hidden = true;
-  $("start").hidden = false;
+  state.lang = l;
+  show("start");
   $("instruction").textContent = "";
   try {
-    const ins = await api(`/api/instruction?lang=${l.code}`);
-    $("instruction").textContent = ins.text;
-    if (ins.audio_b64) { $("player").src = `data:audio/wav;base64,${ins.audio_b64}`; $("player").play().catch(() => {}); }
-  } catch { /* the English copy on screen still explains the step */ }
+    const { text, audio_b64 } = await api(`/api/instruction?lang=${l.code}`);
+    $("instruction").textContent = text;
+    if (audio_b64) playAudio(audio_b64);
+  } catch { /* the English text on screen still explains the step */ }
 }
-$("back").onclick = () => { $("player").pause(); $("start").hidden = true; $("welcome").hidden = false; };
-$("use-sample").onclick = () => startSample();
-$("try-photo").onclick = async () => {
-  const blob = await (await fetch("/static/sample-income-form.png")).blob();
-  processDoc(new File([blob], "sample-income-form.png", { type: "image/png" }), "form");
-};
+
+// ------------------------------------------------------------------ 2. show the form (camera, upload, sample)
+$("back").onclick = () => { $("player").pause(); show("welcome"); };
 $("open-camera").onclick = () => openCamera("form");
-$("form-file").onchange = (e) => { const f = e.target.files[0]; e.target.value = ""; if (f) processDoc(f, "form"); };
+$("id-scan").onclick = () => { if (state.session && !state.busy) openCamera("id"); };
+$("form-file").onchange = (e) => takeFile(e, "form");
+$("camera-file").onchange = (e) => { closeCamera(); takeFile(e, state.camera?.purpose || "form"); };
+$("try-photo").onclick = async () => {
+  const blob = await (await fetch(SAMPLE_PHOTO)).blob();
+  scan(new File([blob], "sample-income-form.png", { type: "image/png" }), "form");
+};
 
-function enterWorkspace() {
-  $("player").pause();
-  $("welcome").hidden = true;
-  $("start").hidden = true;
-  $("workspace").hidden = false;
-  $("lang-pill").textContent = lang.code === "en-IN" ? "English" : `${lang.name} (${lang.english})`;
-  $("stamp-local").textContent = COMPLETE[lang.code] || "";
-  $("chat").innerHTML = "";
-  $("question").textContent = "";
-  wasDone = false;
+function takeFile(event, purpose) {
+  const file = event.target.files[0];
+  event.target.value = "";
+  if (file) scan(file, purpose);
 }
-
-async function startSample() {
-  scanUrl = null;
-  enterWorkspace();
-  setBusy(true, "Getting your form ready");
-  try {
-    handle(await api("/api/session", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ lang: lang.code }),
-    }));
-  } catch (e) { addMsg("err", e.message); setBusy(false, "Tap the mic to answer"); }
-}
-
-// ------------------------------------------------------------------ camera
-let camStream = null;
-let camPurpose = "form";
 
 async function openCamera(purpose) {
-  camPurpose = purpose;
   $("player").pause();
   $("camera").hidden = false;
+  $("shutter").disabled = true;
   $("camera-msg").textContent = purpose === "id"
     ? "Fit your ID card or marksheet inside the frame" : "Fit the whole page inside the frame";
-  $("shutter").disabled = true;
+  state.camera = { stream: null, purpose };
   try {
-    camStream = await navigator.mediaDevices.getUserMedia({
-      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1440 } }, audio: false,
+    state.camera.stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" }, width: { ideal: 1920 }, height: { ideal: 1440 } },
     });
-    $("video").srcObject = camStream;
+    $("video").srcObject = state.camera.stream;
     await $("video").play();
     $("shutter").disabled = false;
   } catch {
@@ -104,32 +104,27 @@ async function openCamera(purpose) {
 }
 
 function closeCamera() {
-  camStream?.getTracks().forEach((t) => t.stop());
-  camStream = null;
+  state.camera?.stream?.getTracks().forEach((t) => t.stop());
   $("video").srcObject = null;
   $("camera").hidden = true;
 }
 
 $("camera-cancel").onclick = closeCamera;
-$("camera-file").onchange = (e) => {
-  const f = e.target.files[0]; e.target.value = "";
-  if (f) { closeCamera(); processDoc(f, camPurpose); }
-};
+document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("camera").hidden) closeCamera(); });
 $("shutter").onclick = () => {
-  const v = $("video");
-  if (!v.videoWidth) return;
-  const c = document.createElement("canvas");
-  c.width = v.videoWidth; c.height = v.videoHeight;
-  c.getContext("2d").drawImage(v, 0, 0);
-  c.toBlob((blob) => { closeCamera(); processDoc(new File([blob], "scan.jpg", { type: "image/jpeg" }), camPurpose); },
+  const video = $("video");
+  if (!video.videoWidth) return;
+  const canvas = el("canvas");
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+  canvas.getContext("2d").drawImage(video, 0, 0);
+  const purpose = state.camera.purpose;
+  canvas.toBlob((blob) => { closeCamera(); scan(new File([blob], "scan.jpg", { type: "image/jpeg" }), purpose); },
     "image/jpeg", 0.92);
 };
-document.addEventListener("keydown", (e) => { if (e.key === "Escape" && !$("camera").hidden) closeCamera(); });
 
-// ------------------------------------------------------------------ scanning (form or ID)
-let scanUrl = null;
-
-async function processDoc(file, purpose) {
+// Send a photo to Sarvam Vision: a form starts a new session, an ID pre-fills the open one.
+async function scan(file, purpose) {
   const url = URL.createObjectURL(file);
   const isPdf = file.type === "application/pdf";
   $("scan-img").hidden = isPdf;
@@ -141,245 +136,219 @@ async function processDoc(file, purpose) {
     ? "Sarvam Vision is reading the blanks on your form" : "Sarvam Vision is reading your document";
   $("scanning").hidden = false;
 
-  const fd = new FormData();
-  fd.append("file", file, file.name || "scan.jpg");
   try {
-    let r;
     if (purpose === "form") {
-      fd.append("lang", lang.code);
-      r = await api("/api/form/scan", { method: "POST", body: fd });
-      scanUrl = url;
-      enterWorkspace();
+      const result = await api("/api/form/scan", { method: "POST", body: form({ lang: state.lang.code, file }) });
+      state.scanUrl = url;
+      openWorkspace();
+      addMessage("sys", `Found ${result.state.form.fields.length} blanks on your form`);
       $("scanning").hidden = true;
-      addMsg("sys", `Found ${r.state.form.fields.length} blanks on your form`);
+      handleTurn(result);
     } else {
-      fd.append("session_id", session.id);
-      r = await api("/api/document", { method: "POST", body: fd });
+      const result = await api("/api/document", { method: "POST", body: form({ session_id: state.session.id, file }) });
       $("scanning").hidden = true;
+      handleTurn(result);
     }
-    handle(r);
   } catch (e) {
     $("scanning").classList.add("failed");
     $("scan-text").textContent = e.message;
     $("scan-retry").hidden = false;
-    $("scan-retry").onclick = () => { $("scanning").hidden = true; if (purpose === "id") setBusy(false, nextPrompt()); };
+    $("scan-retry").onclick = () => { $("scanning").hidden = true; };
   }
 }
-$("id-scan").onclick = () => { if (session && !busy) openCamera("id"); };
 
+// ------------------------------------------------------------------ 3. the conversation
+function openWorkspace() {
+  $("player").pause();
+  show("workspace");
+  $("lang-pill").textContent = languageLabel(state.lang);
+  $("stamp-local").textContent = state.lang.complete;
+  $("chat").replaceChildren();
+  $("question").textContent = "";
+  state.wasDone = false;
+}
 $("restart").onclick = () => location.reload();
 
-// ------------------------------------------------------------------ rendering
-function addMsg(kind, text) {
-  const li = document.createElement("li");
-  li.className = kind;
-  li.textContent = text;
-  $("chat").append(li);
+function addMessage(kind, text) {
+  $("chat").append(el("li", kind, text));
   $("chat").scrollTop = $("chat").scrollHeight;
 }
 
-function renderForm(state, changed = []) {
-  session = state;
-  $("form-title").textContent = state.form.title;
-  $("dept").textContent = state.scanned ? "Read from your photo by Sarvam Vision" : "Department of Social Welfare, Form S-1 (sample)";
-  if (state.scanned && scanUrl) {
-    const view = document.createElement("a");
-    view.href = scanUrl; view.target = "_blank"; view.rel = "noopener"; view.textContent = "View photo";
-    $("dept").append(view);
-  }
-  const firstMissing = state.form.fields.find((f) => f.kind !== "sensitive" && !state.values[f.key]);
-  $("fields").innerHTML = "";
-  for (const f of state.form.fields) {
-    const li = document.createElement("li");
-    if (!state.done && firstMissing && f.key === firstMissing.key) li.classList.add("current");
-
-    const label = document.createElement("div");
-    label.className = "f-label";
-    label.textContent = f.label;
-    if (f.local_label && f.local_label !== f.label) {
-      const local = document.createElement("span");
-      local.className = "local";
-      local.textContent = f.local_label;
-      label.append(local);
-    }
-
-    if (f.kind === "sensitive") {
-      const own = document.createElement("div");
-      own.className = "f-own";
-      own.textContent = "Write this yourself on the paper form. Sahayak never asks for it.";
-      li.append(label, own);
-      $("fields").append(li);
-      continue;
-    }
-    if (f.kind === "choice") {
-      const box = document.createElement("div");
-      box.className = "f-choices" + (changed.includes(f.key) ? " writing" : "");
-      for (const o of f.options) {
-        const btn = document.createElement("button");
-        btn.type = "button";
-        btn.setAttribute("aria-pressed", String(state.values[f.key] === o));
-        btn.innerHTML = `<span class="box"></span><span></span>`;
-        btn.lastChild.textContent = o;
-        btn.onclick = () => saveEdit(f.key, o);
-        box.append(btn);
-      }
-      li.append(label, box);
-      $("fields").append(li);
-      continue;
-    }
-    const v = document.createElement("div");
-    v.className = "f-value";
-    v.contentEditable = "true";
-    v.spellcheck = false;
-    v.dataset.hint = f.hint;
-    v.setAttribute("aria-label", f.label);
-    v.textContent = state.values[f.key] || "";
-    if (changed.includes(f.key) && v.textContent) v.classList.add("writing");
-    v.onblur = () => saveEdit(f.key, v.textContent);
-    v.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); v.blur(); } };
-
-    li.append(label, v);
-    $("fields").append(li);
-  }
-  const askable = state.form.fields.filter((f) => f.kind !== "sensitive");
-  const total = askable.length;
-  const filled = askable.filter((f) => state.values[f.key]).length;
-  $("progress-text").innerHTML = `<b>${filled}/${total}</b>answered`;
-
-  $("stamp").hidden = !state.done;
-  $("print").hidden = !state.done;
-  if (state.done && !wasDone) {
-    $("stamp").classList.remove("land");
-    void $("stamp").offsetWidth; // restart the animation
-    $("stamp").classList.add("land");
-  }
-  wasDone = state.done;
-}
-
-async function saveEdit(field, value) {
-  if (!session || (session.values[field] || "") === value.trim()) return;
-  try {
-    renderForm(await api(`/api/session/${session.id}/field`, {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ field, value }),
-    }), [field]);
-  } catch (e) { addMsg("err", e.message); }
-}
-
-function handle(r) {
+function handleTurn(r) {
   // The previous question moves into the history; the new one takes the big slot.
-  const prev = $("question").textContent;
-  if (prev) addMsg("bot", prev);
-  if (r.heard) addMsg("user", r.heard);
-  if (r.error) addMsg("err", r.error);
-  if (r.reply) {
-    $("question").textContent = r.reply;
-    $("question").classList.toggle("long", r.reply.length > 110);
-  }
+  if ($("question").textContent) addMessage("bot", $("question").textContent);
+  if (r.heard) addMessage("user", r.heard);
+  if (r.error) addMessage("err", r.error);
+  $("question").textContent = r.reply;
+  $("question").classList.toggle("long", r.reply.length > 110);
 
-  renderForm(r.state, r.changed || []);
-  const t = r.timings || {};
-  const names = { scan_s: "Scanning", stt_s: "Listening", doc_s: "Reading", llm_s: "Thinking", tts_s: "Voice" };
-  $("timings").textContent = Object.keys(names).filter((k) => t[k] != null)
-    .map((k) => `${names[k]} ${t[k]}s`).join(", ");
+  renderForm(r.state, r.changed);
+  $("timings").textContent = Object.entries(STAGE_NAMES)
+    .filter(([key]) => r.timings[key] != null)
+    .map(([key, name]) => `${name} ${r.timings[key]}s`).join(", ");
 
-  lastAudio = r.audio_b64 || null;
-  $("replay").hidden = !lastAudio;
-  if (lastAudio) play(lastAudio);
+  state.lastAudio = r.audio_b64;
+  $("replay").hidden = !r.audio_b64;
+  if (r.audio_b64) playAudio(r.audio_b64, true);
   else setBusy(false, nextPrompt());
 }
 
-function nextPrompt() { return session?.done ? "Your form is complete" : "Tap the mic to answer"; }
+async function sendTurn(fields, label) {
+  setBusy(true, label);
+  try {
+    handleTurn(await api("/api/turn", { method: "POST", body: form({ session_id: state.session.id, ...fields }) }));
+  } catch (e) {
+    addMessage("err", e.message);
+    setBusy(false, nextPrompt());
+  }
+}
+
+$("text-form").onsubmit = (e) => {
+  e.preventDefault();
+  const text = $("text-input").value.trim();
+  if (!text || !state.session || state.busy) return;
+  $("text-input").value = "";
+  sendTurn({ text }, "Thinking");
+};
+
+const nextPrompt = () => (state.session?.done ? "Your form is complete" : "Tap the mic to answer");
+
+// ------------------------------------------------------------------ the form on the right
+function renderForm(session, changed = []) {
+  state.session = session;
+  $("form-title").textContent = session.form.title;
+  $("dept").replaceChildren("Read from your photo by Sarvam Vision");
+  if (state.scanUrl) {
+    const view = el("a", null, "View photo");
+    Object.assign(view, { href: state.scanUrl, target: "_blank", rel: "noopener" });
+    $("dept").append(view);
+  }
+
+  const askable = session.form.fields.filter((f) => f.kind !== "sensitive");
+  const current = !session.done && askable.find((f) => !session.values[f.key]);
+  $("fields").replaceChildren(...session.form.fields.map((f) => fieldRow(f, session, changed, f === current)));
+
+  const filled = askable.filter((f) => session.values[f.key]).length;
+  $("progress-text").innerHTML = `<b>${filled}/${askable.length}</b>answered`;
+
+  $("stamp").hidden = !session.done;
+  $("print").hidden = !session.done;
+  if (session.done && !state.wasDone) {
+    $("stamp").classList.remove("land");
+    void $("stamp").offsetWidth; // restart the stamp animation
+    $("stamp").classList.add("land");
+  }
+  state.wasDone = session.done;
+}
+
+function fieldRow(f, session, changed, isCurrent) {
+  const li = el("li", isCurrent ? "current" : null);
+  const label = el("div", "f-label", f.label);
+  if (f.local_label && f.local_label !== f.label) label.append(el("span", "local", f.local_label));
+  li.append(label);
+
+  const value = session.values[f.key] || "";
+  const justWritten = changed.includes(f.key);
+
+  if (f.kind === "sensitive") {
+    li.append(el("div", "f-own", "Write this yourself on the paper form. Sahayak never asks for it."));
+  } else if (f.kind === "choice") {
+    const choices = el("div", "f-choices" + (justWritten ? " writing" : ""));
+    for (const option of f.options) {
+      const b = el("button");
+      b.type = "button";
+      b.setAttribute("aria-pressed", String(value === option));
+      b.append(el("span", "box"), el("span", null, option));
+      b.onclick = () => saveEdit(f.key, option);
+      choices.append(b);
+    }
+    li.append(choices);
+  } else {
+    const input = el("div", "f-value" + (justWritten && value ? " writing" : ""), value);
+    Object.assign(input, { contentEditable: "true", spellcheck: false });
+    input.dataset.hint = f.hint;
+    input.setAttribute("aria-label", f.label);
+    input.onblur = () => saveEdit(f.key, input.textContent);
+    input.onkeydown = (e) => { if (e.key === "Enter") { e.preventDefault(); input.blur(); } };
+    li.append(input);
+  }
+  return li;
+}
+
+async function saveEdit(field, value) {
+  if ((state.session.values[field] || "") === value.trim()) return;
+  try {
+    renderForm(await api(`/api/session/${state.session.id}/field`, {
+      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ field, value }),
+    }), [field]);
+  } catch (e) { addMessage("err", e.message); }
+}
+
+$("print").onclick = () => window.print();
 
 // ------------------------------------------------------------------ audio out
-function play(b64) {
-  const p = $("player");
-  p.src = `data:audio/wav;base64,${b64}`;
-  setBusy(false, "Speaking. Tap the mic to interrupt");
-  p.onended = () => setStatus(nextPrompt());
-  p.play().catch(() => setStatus("Press “Hear it again” to listen"));
+function playAudio(b64, isReply = false) {
+  const player = $("player");
+  player.src = `data:audio/wav;base64,${b64}`;
+  if (isReply) {
+    setBusy(false, "Speaking. Tap the mic to interrupt");
+    player.onended = () => setStatus(nextPrompt());
+  }
+  player.play().catch(() => isReply && setStatus("Press “Hear it again” to listen"));
 }
-$("replay").onclick = () => lastAudio && play(lastAudio);
+$("replay").onclick = () => state.lastAudio && playAudio(state.lastAudio, true);
 
 // ------------------------------------------------------------------ audio in (push-to-talk)
-function pickMime() {
-  for (const m of ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"]) {
-    if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
-  }
-  return "";
-}
+const RECORDING_TYPES = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
+const MIN_RECORDING_BYTES = 1200;
 
-async function startRec() {
-  if (busy || recorder || !session) return;
+async function startRecording() {
+  if (state.busy || state.recorder || !state.session) return;
   $("player").pause(); // barge-in: stop Sahayak talking
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mime = pickMime();
-    recorder = new MediaRecorder(stream, mime ? { mimeType: mime } : {});
-    chunks = [];
-    recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
-    recorder.onstop = () => { stream.getTracks().forEach((t) => t.stop()); sendAudio(recorder.mimeType); };
+    const mimeType = RECORDING_TYPES.find((t) => MediaRecorder.isTypeSupported(t));
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
+    state.recorder = recorder;
+    state.chunks = [];
+    recorder.ondataavailable = (e) => e.data.size && state.chunks.push(e.data);
+    recorder.onstop = () => { stream.getTracks().forEach((t) => t.stop()); sendRecording(recorder.mimeType); };
     recorder.start();
     $("mic").classList.add("rec");
     $("mic").setAttribute("aria-label", "Tap to finish");
     setStatus("Listening. Tap again when you finish");
-  } catch (e) {
-    addMsg("err", "The microphone is blocked. Allow microphone access in the browser, or type your answer.");
+  } catch {
+    addMessage("err", "The microphone is blocked. Allow microphone access in the browser, or type your answer.");
   }
 }
 
-function stopRec() {
-  if (!recorder) return;
+function stopRecording() {
+  if (!state.recorder) return;
   $("mic").classList.remove("rec");
   $("mic").setAttribute("aria-label", "Tap to answer");
-  recorder.stop();
+  state.recorder.stop();
 }
 
-async function sendAudio(mime) {
-  recorder = null;
-  const blob = new Blob(chunks, { type: mime || "audio/webm" });
-  if (blob.size < 1200) { setStatus("That was too short. Tap and speak again"); return; }
-  const ext = (mime || "").includes("mp4") ? "m4a" : (mime || "").includes("ogg") ? "ogg" : "webm";
-  const fd = new FormData();
-  fd.append("session_id", session.id);
-  fd.append("audio", blob, `speech.${ext}`);
-  await turn(fd, "Understanding your answer");
+function sendRecording(mimeType) {
+  state.recorder = null;
+  const blob = new Blob(state.chunks, { type: mimeType || "audio/webm" });
+  if (blob.size < MIN_RECORDING_BYTES) return setStatus("That was too short. Tap and speak again");
+  const ext = mimeType.includes("mp4") ? "m4a" : mimeType.includes("ogg") ? "ogg" : "webm";
+  sendTurn({ audio: new File([blob], `speech.${ext}`, { type: blob.type }) }, "Understanding your answer");
 }
 
-async function turn(fd, label) {
-  setBusy(true, label);
-  try { handle(await api("/api/turn", { method: "POST", body: fd })); }
-  catch (e) { addMsg("err", e.message); setBusy(false, nextPrompt()); }
-}
+$("mic").onclick = () => (state.recorder ? stopRecording() : startRecording());
 
-$("mic").onclick = () => (recorder ? stopRec() : startRec());
-// Hold-Space-to-talk only when nothing else has focus, so typing never opens the mic.
-const typing = () => ![document.body, $("mic")].includes(document.activeElement);
-document.addEventListener("keydown", (e) => {
-  if (e.code === "Space" && !e.repeat && !typing() && session) { e.preventDefault(); startRec(); }
-});
-document.addEventListener("keyup", (e) => {
-  if (e.code === "Space" && !typing()) { e.preventDefault(); stopRec(); }
-});
+// Hold Space to talk, but only when nothing else has focus, so typing never opens the mic.
+const spaceToTalk = (e) => e.code === "Space" && [document.body, $("mic")].includes(document.activeElement);
+document.addEventListener("keydown", (e) => { if (spaceToTalk(e) && !e.repeat) { e.preventDefault(); startRecording(); } });
+document.addEventListener("keyup", (e) => { if (spaceToTalk(e)) { e.preventDefault(); stopRecording(); } });
 
-$("text-form").onsubmit = async (e) => {
-  e.preventDefault();
-  const text = $("text-input").value.trim();
-  if (!text || !session || busy) return;
-  $("text-input").value = "";
-  const fd = new FormData();
-  fd.append("session_id", session.id);
-  fd.append("text", text);
-  await turn(fd, "Thinking");
-};
-
-$("print").onclick = () => window.print();
-
-// ------------------------------------------------------------------ status
-function setStatus(t) { $("status").textContent = t; }
-function setBusy(b, t) {
-  busy = b;
-  $("mic").disabled = b;
-  $("mic").classList.toggle("thinking", b);
-  if (t) setStatus(t);
+// ------------------------------------------------------------------ status line
+function setStatus(text) { $("status").textContent = text; }
+function setBusy(busy, text) {
+  state.busy = busy;
+  $("mic").disabled = busy;
+  $("mic").classList.toggle("thinking", busy);
+  if (text) setStatus(text);
 }

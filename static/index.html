@@ -28,8 +28,6 @@
   </defs>
 </svg>
 
-<div id="mock-banner" class="banner" hidden>Practice mode: answers are canned because no Sarvam API key was found. Add <code>SARVAM_API_KEY</code> to <code>.env</code> and restart the server.</div>
-
 <!-- Welcome: pick a language by the word for "speak" -->
 <section id="welcome" class="welcome">
   <svg class="watermark" aria-hidden="true"><use href="#rosette"/></svg>
@@ -54,9 +52,7 @@
         <span>Upload a photo or PDF</span>
       </label>
     </div>
-    <p class="no-form">No form with you?
-      <button id="try-photo" class="link-btn dark">Scan a sample photo</button> or
-      <button id="use-sample" class="link-btn dark">fill the sample scholarship form</button></p>
+    <p class="no-form">No form with you? <button id="try-photo" class="link-btn dark">Scan a sample photo</button></p>
   </div>
   <figure class="start-art" aria-hidden="true">
     <div class="art-sheet">
@@ -130,7 +126,7 @@
   </section>
 
   <section class="desk" aria-label="Your form">
-    <article id="paper" class="paper">
+    <article class="paper">
       <header class="paper-head">
         <svg class="seal" aria-hidden="true"><use href="#rosette"/></svg>
         <div>

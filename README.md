@@ -1,58 +1,58 @@
 # Sahayak — show it any form, then just talk
 
-Millions of people can't fill English government forms. Point Sahayak at any paper form: Sarvam
-Vision reads every blank on the page, then Sahayak asks about each one out loud in the user's
-language, understands answers spoken in mixed Hindi/Telugu/Tamil + English, and writes the form in
-English. Tick-box fields are ticked, sensitive fields (Aadhaar, bank) are left for the user's own hand,
-and an ID card or marksheet can pre-fill what it can.
+Government forms in India are printed in English, but most of the people who need them don't read
+English comfortably. Sahayak lets anyone fill a paper form by talking, in their own language.
 
-**Sarvam stack:** Sarvam Vision / Doc AI Extract (reads the form's fields; pre-fills from IDs) ·
-Saaras v4 (speech-to-text, `codemix`) · Sarvam-105B (the agent, forced tool call) · Bulbul v4 Flash
-(voice) · Mayura (field labels and the scan instruction in the user's language) · Transliterate.
+1. **Scan.** Hold any paper form up to the camera. Sarvam Vision reads every blank on the page.
+2. **Talk.** Sahayak asks about each blank, one at a time, out loud in 11 Indian languages, and
+   understands answers mixed with English ("मेरा mobile number है…").
+3. **Done.** Answers are written on the form in English, checked (dates, mobile numbers, amounts,
+   tick boxes), read back for confirmation, and ready to print or save as a PDF.
+
+An ID card or marksheet can pre-fill what it can. Sensitive fields (Aadhaar, bank details) are never
+asked out loud; the form leaves them for the applicant to write by hand.
+
+## Built on Sarvam AI
+
+| Step | Sarvam model |
+|---|---|
+| Read the form's blanks, pre-fill from an ID | Sarvam Vision (Document AI Extract) |
+| Understand spoken answers | Saaras v4, `codemix` mode |
+| Decide what to fill and ask next | Sarvam-105B (forced tool call, reasoning off) |
+| Speak questions and the read-back | Bulbul v4 Flash (v3 for Malayalam and Odia) |
+| Field labels and instructions in the user's language | Mayura |
+| Names in English letters | Transliterate |
 
 ## Run it
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements.txt
-cp .env.example .env          # paste SARVAM_API_KEY
-.venv/bin/python scripts/smoke_test.py                      # every Sarvam call, PASS/FAIL
-.venv/bin/python scripts/smoke_test.py doc samples/id.jpg   # also test Doc AI on a file
-.venv/bin/uvicorn app.main:app --reload --port 8000         # open http://localhost:8000
+cp .env.example .env                                   # add SARVAM_API_KEY
+.venv/bin/python scripts/smoke_test.py                 # checks every Sarvam call against the live API
+.venv/bin/uvicorn app.main:app --port 8000             # open http://localhost:8000
 ```
 
-Without a key the app runs in **mock mode** (canned speech/LLM/voice) so the UI can be worked on offline.
+The camera and microphone need `localhost` or HTTPS.
 
-## How a turn works
+## How it works
 
 ```
-camera / photo / PDF ─► POST /api/form/scan ─► Sarvam Vision: title, blanks, tick-box options
-                                            └─► field kinds (name/date/phone/number/choice/sensitive)
-
-mic (MediaRecorder webm) ─► POST /api/turn ─► Saaras v4 codemix ─► Sarvam-105B (JSON: updates, reply, done)
-                                                               └─► transliterate names → form values
-                         ◄── reply text + Bulbul WAV + updated form state + timings ◄──┘
+photo ─► POST /api/form/scan ─► Sarvam Vision ─► Form (title, fields, kinds) ─► agent opens the conversation
+speech ─► POST /api/turn ─► Saaras ─► Sarvam-105B ─► normalise + validate each value ─► Bulbul reply
 ```
 
-The agent is one structured-output call per turn (reasoning off, for speed): it decides which
-fields to set or correct, what to ask next (one field at a time), and when the user has confirmed
-the read-back.
+Each turn is one Sarvam-105B call that returns `{updates, reply, done}`. The server, not the model,
+decides what goes on the form: every value is normalised for its field kind and validated, and a
+rejected value makes the agent ask again. The form only counts as done when the user confirms a
+read-back with nothing left to change.
 
-## Files
-
-| Path | What |
+| Path | Responsibility |
 |---|---|
-| `app/config.py` | The sample form (6 fields), languages and voices |
-| `app/forms.py` | Turns a Sarvam Vision scan into a fillable form: keys, kinds, validation hints |
-| `app/sarvam.py` | One function per Sarvam call, each with a mock fallback |
-| `app/agent.py` | Session state, system prompt, turn logic |
-| `app/main.py` | FastAPI routes: `/api/form/scan`, `/api/session` (sample), `/api/turn`, `/api/document`, `/api/instruction` |
-| `static/` | Single-page UI: language picker, camera scan, push-to-talk, live paper form, print to PDF |
-| `samples/` | A blank income-certificate form and a marksheet to test scanning and pre-fill |
-| `scripts/smoke_test.py` | Verifies the key and every API before the build hour |
-
-## Build-hour ideas (pick 1–2)
-
-- Tune the prompt on real voices: dates ("बारह मार्च दो हज़ार तीन"), mobile digits, "2 lakh".
-- Show the extracted-vs-spoken source of each field (Doc AI returns confidences in `annotations`).
-- Read back the final form in the user's language and offer a WhatsApp-shareable PDF.
-- Second form type (ration card) by adding another `FORM` dict.
+| `app/config.py` | Settings and the 11 languages (voice, script, UI words) |
+| `app/sarvam.py` | One function per Sarvam API call; the only module that uses the SDK |
+| `app/forms.py` | Form and field model, reading a scan, normalising and validating answers |
+| `app/agent.py` | Sessions and the conversation: prompt, agent step, re-ask on bad values |
+| `app/main.py` | HTTP routes |
+| `static/` | Single-page UI: language picker, camera scan, push-to-talk, the live form |
+| `scripts/smoke_test.py` | Live check of every Sarvam call |
+| `docs/PITCH.md` | The pitch and a full explanation |

@@ -24,10 +24,7 @@ body { margin: 0; font: 400 17px/1.5 var(--sans); color: var(--teal); background
 button, input { font: inherit; color: inherit; }
 button { cursor: pointer; }
 :focus-visible { outline: 3px solid var(--marigold); outline-offset: 2px; border-radius: 6px; }
-code { font-size: .85em; background: #0001; padding: 1px 5px; border-radius: 4px; }
 
-.banner { background: var(--violet); color: #fff; padding: 9px 20px; font-size: 15px; text-align: center; }
-.banner code { background: #fff2; }
 
 .brand { display: inline-flex; align-items: center; gap: 10px; font-weight: 700; font-size: 20px;
   font-stretch: 112%; letter-spacing: .01em; }
@@ -42,7 +39,6 @@ code { font-size: .85em; background: #0001; padding: 1px 5px; border-radius: 4px
 .welcome h1 { font-size: clamp(42px, 6.4vw, 84px); line-height: .98; font-weight: 700; font-stretch: 118%;
   letter-spacing: -.02em; margin: 64px 0 18px; max-width: 12ch; }
 .lede { font-size: 20px; max-width: 54ch; margin: 0 0 40px; color: var(--teal-2); }
-.lede span { font-weight: 600; }
 .lang-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 0;
   border-top: 2px solid var(--teal); }
 .lang-grid button { text-align: left; background: none; border: 0; border-bottom: 1px solid var(--rule);
@@ -99,9 +95,6 @@ code { font-size: .85em; background: #0001; padding: 1px 5px; border-radius: 4px
 .text-form button { background: none; border: 0; color: #fff; font-weight: 600; padding: 8px 4px; }
 .controls-row { display: flex; justify-content: space-between; width: 100%; max-width: 440px; align-items: center;
   font-size: 14px; gap: 12px; }
-.upload input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-.upload span { color: #fff; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
-.upload:focus-within span { outline: 3px solid var(--marigold); outline-offset: 2px; }
 .timings { color: var(--teal-soft); font-variant-numeric: tabular-nums; text-align: right; }
 
 /* ------------------------------------------------------------ the form */
@@ -260,7 +253,7 @@ code { font-size: .85em; background: #0001; padding: 1px 5px; border-radius: 4px
 }
 @media print {
   body { background: #fff; }
-  .banner, .voice, .print { display: none !important; }
+  .voice, .print { display: none !important; }
   .workspace { display: block; }
   .desk { padding: 0; }
   .paper { box-shadow: none; max-width: none; }

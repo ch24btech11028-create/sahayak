@@ -1,6 +1,7 @@
-"""Sahayak backend. Run with:  uvicorn app.main:app --reload --port 8000"""
+"""Sahayak HTTP API. Run with:  uvicorn app.main:app --port 8000"""
 
 import time
+from functools import cache
 from pathlib import Path
 
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
@@ -11,144 +12,132 @@ from pydantic import BaseModel
 from . import agent, config, forms, sarvam
 
 STATIC = Path(__file__).resolve().parent.parent / "static"
+DOCUMENT_TYPES = {"application/pdf", "image/png", "image/jpeg"}
+SCAN_INSTRUCTION = "Hold your form in front of the camera so the whole page is visible, then press the button."
+
 app = FastAPI(title="Sahayak")
 
 
-def _get(sid: str) -> dict:
-    s = agent.SESSIONS.get(sid)
-    if not s:
-        raise HTTPException(404, "Session not found. Start a new one.")
-    return s
+class Timer:
+    """Collects how long each Sarvam stage took, shown in the UI."""
+
+    def __init__(self):
+        self.timings: dict[str, float] = {}
+
+    def __call__(self, name: str, fn, *args):
+        started = time.monotonic()
+        try:
+            return fn(*args)
+        finally:
+            self.timings[name] = round(time.monotonic() - started, 2)
 
 
-def _respond(s: dict, turn: dict, timings: dict, heard: str | None = None) -> dict:
-    t = time.time()
+def _session(sid: str) -> agent.Session:
+    if sid not in agent.SESSIONS:
+        raise HTTPException(404, "This session has ended. Start over.")
+    return agent.SESSIONS[sid]
+
+
+def _language(code: str) -> str:
+    if code not in config.LANGUAGES:
+        raise HTTPException(400, f"Unsupported language: {code}")
+    return code
+
+
+def _document(file: UploadFile) -> tuple[bytes, str, str]:
+    content_type = (file.content_type or "").split(";")[0]
+    if content_type not in DOCUMENT_TYPES:
+        raise HTTPException(400, "Use a photo (JPG or PNG) or a PDF of up to 10 pages.")
+    data = file.file.read()
+    if not data:
+        raise HTTPException(400, "The file is empty.")
+    return data, file.filename or "document", content_type
+
+
+def _reply(s: agent.Session, turn: dict, timer: Timer, heard: str | None = None) -> dict:
+    """Speak the agent's reply and return everything the UI needs for this turn."""
+    audio, error = None, turn["error"]
     try:
-        audio = sarvam.speak(turn["reply"], s["lang"])
+        audio = timer("tts_s", sarvam.speak, turn["reply"], s.lang)
     except Exception as e:
-        audio, turn["error"] = None, f"TTS failed: {e}"
-    timings["tts_s"] = round(time.time() - t, 2)
-    timings["llm_s"] = turn.get("llm_s")
+        error = f"Could not play the reply aloud: {e}"
     return {"heard": heard, "reply": turn["reply"], "audio_b64": audio, "changed": turn["changed"],
-            "error": turn.get("error"), "timings": timings, "state": agent.public_state(s)}
+            "error": error, "timings": {**timer.timings, "llm_s": turn["llm_s"]}, "state": s.to_dict()}
 
 
 @app.get("/api/config")
 def get_config():
-    return {"mock": config.MOCK, "form_title": config.FORM["title"],
-            "languages": [{"code": c, "name": l["name"], "english": l["english"],
-                           "speak": config.SPEAK_WORD.get(c, l["name"])}
-                          for c, l in config.LANGUAGES.items()]}
+    return {"languages": [{"code": l.code, "name": l.name, "english": l.english, "speak": l.speak,
+                           "complete": l.complete} for l in config.LANGUAGES.values()]}
 
 
-_instruction_cache: dict[str, dict] = {}
-INSTRUCTION = "Hold your form in front of the camera so the whole page is visible, then press the button."
+@cache
+def _instruction(lang: str) -> dict:
+    text = sarvam.translate(SCAN_INSTRUCTION, lang)
+    return {"text": text, "audio_b64": sarvam.speak(text, lang)}
 
 
 @app.get("/api/instruction")
-def instruction(lang: str = "hi-IN"):
-    """The scan instruction, translated and spoken, for people who can't read the English UI."""
-    if lang not in config.LANGUAGES:
-        raise HTTPException(400, f"Unsupported language {lang}")
-    if lang not in _instruction_cache:
-        try:
-            text = sarvam.translate(INSTRUCTION, lang)
-            _instruction_cache[lang] = {"text": text, "audio_b64": sarvam.speak(text, lang)}
-        except Exception as e:
-            return {"text": INSTRUCTION, "audio_b64": None, "error": str(e)}
-    return _instruction_cache[lang]
-
-
-class StartBody(BaseModel):
-    lang: str = "hi-IN"
-
-
-@app.post("/api/session")
-def start_session(body: StartBody):
-    if body.lang not in config.LANGUAGES:
-        raise HTTPException(400, f"Unsupported language {body.lang}")
-    s = agent.create_session(body.lang, forms.sample_form())
-    return _respond(s, agent.run_turn(s, "(start)"), {})
-
-
-ALLOWED_DOCS = {"application/pdf", "image/png", "image/jpeg"}
-
-
-def _read_upload(file: UploadFile) -> tuple[bytes, str, str]:
-    data = file.file.read()
-    ctype = (file.content_type or "").split(";")[0]
-    if ctype not in ALLOWED_DOCS:
-        raise HTTPException(400, "Use a photo (JPG or PNG) or a PDF of up to 10 pages.")
-    if not data:
-        raise HTTPException(400, "The file is empty.")
-    return data, file.filename or "document", ctype
+def instruction(lang: str):
+    """The scan instruction in the user's language, spoken, for people who can't read the English UI."""
+    lang = _language(lang)
+    try:
+        return _instruction(lang)
+    except Exception:
+        return {"text": SCAN_INSTRUCTION, "audio_b64": None}
 
 
 @app.post("/api/form/scan")
-def scan_form(lang: str = Form("hi-IN"), file: UploadFile = File(...)):
-    """Photograph any paper form: Sarvam Vision lists its fields, then the agent asks for them."""
-    if lang not in config.LANGUAGES:
-        raise HTTPException(400, f"Unsupported language {lang}")
-    data, name, ctype = _read_upload(file)
-    t = time.time()
+def scan_form(lang: str = Form(...), file: UploadFile = File(...)):
+    """A photo of any paper form → Sarvam Vision lists its blanks → the agent opens the conversation."""
+    lang = _language(lang)
+    data, name, content_type = _document(file)
+    timer = Timer()
     try:
-        result = sarvam.scan_form(data, name, ctype)
+        result = timer("scan_s", sarvam.vision_extract, data, name, content_type, forms.SCAN_SCHEMA)
     except Exception as e:
         raise HTTPException(502, f"Sarvam Vision could not read the form: {e}")
     form, prefilled = forms.from_scan(result)
-    if not form["fields"]:
-        raise HTTPException(422, "No fillable fields were found. Retake the photo with the whole form "
-                                 "in view and good light.")
-    timings = {"scan_s": round(time.time() - t, 2)}
-    s = agent.create_session(lang, form, prefilled)
-    return _respond(s, agent.run_turn(s, "(start)"), timings)
+    if not form.fields:
+        raise HTTPException(422, "No blanks were found. Retake the photo with the whole page in view and good light.")
+    s = agent.start(lang, form, prefilled)
+    return _reply(s, agent.step(s, None), timer)
 
 
 @app.post("/api/turn")
-def voice_turn(session_id: str = Form(...), audio: UploadFile | None = File(None),
-               text: str | None = Form(None)):
-    """One conversational turn. Send recorded audio (push-to-talk) or typed text."""
-    s = _get(session_id)
-    timings = {}
+def turn(session_id: str = Form(...), audio: UploadFile | None = File(None), text: str | None = Form(None)):
+    """One answer from the user: recorded speech (push-to-talk) or typed text."""
+    s = _session(session_id)
+    timer = Timer()
     if audio is not None:
-        t = time.time()
         data = audio.file.read()
         if not data:
-            raise HTTPException(400, "Empty recording")
+            raise HTTPException(400, "The recording is empty.")
         try:
-            heard = sarvam.transcribe(data, audio.filename or "speech.webm", s["lang"])
+            heard = timer("stt_s", sarvam.transcribe, data, audio.filename or "speech.webm", s.lang)
         except Exception as e:
-            raise HTTPException(502, f"Speech-to-text failed: {e}")
-        timings["stt_s"] = round(time.time() - t, 2)
-    elif text and text.strip():
-        heard = text.strip()
+            raise HTTPException(502, f"Could not understand the recording: {e}")
     else:
-        raise HTTPException(400, "Send audio or text")
+        heard = (text or "").strip()
     if not heard:
-        heard = "(silence)"
-    return _respond(s, agent.run_turn(s, heard), timings, heard)
+        raise HTTPException(400, "Nothing was heard. Tap the mic and speak, or type your answer.")
+    return _reply(s, agent.step(s, heard), timer, heard)
 
 
 @app.post("/api/document")
-def upload_document(session_id: str = Form(...), file: UploadFile = File(...)):
-    """Pre-fill the form from an ID card / marksheet photo or PDF using Doc AI Extract."""
-    s = _get(session_id)
-    data, name, ctype = _read_upload(file)
-    t = time.time()
+def fill_from_document(session_id: str = Form(...), file: UploadFile = File(...)):
+    """Pre-fill the open form from a photo of an ID card, marksheet or certificate."""
+    s = _session(session_id)
+    data, name, content_type = _document(file)
+    timer = Timer()
     try:
-        found = sarvam.extract_fields(data, name, ctype, s["form"]["fields"])
+        found = timer("doc_s", sarvam.vision_extract, data, name, content_type, forms.id_document_schema(s.form))
     except Exception as e:
-        raise HTTPException(502, f"Document reading failed: {e}")
-    timings = {"doc_s": round(time.time() - t, 2)}
-    changed = agent.apply_document_values(s, found)
-    turn = agent.run_turn(s, agent.document_note(s, changed))
-    turn["changed"] = sorted(set(turn["changed"]) | set(changed))
-    return _respond(s, turn, timings)
-
-
-@app.get("/api/session/{sid}")
-def get_session(sid: str):
-    return agent.public_state(_get(sid))
+        raise HTTPException(502, f"Sarvam Vision could not read the document: {e}")
+    changed, note = agent.fill_from_document(s, {k: str(v) for k, v in found.items() if v})
+    result = agent.step(s, note)
+    result["changed"] = sorted(set(result["changed"]) | set(changed))
+    return _reply(s, result, timer)
 
 
 class FieldEdit(BaseModel):
@@ -158,13 +147,11 @@ class FieldEdit(BaseModel):
 
 @app.post("/api/session/{sid}/field")
 def edit_field(sid: str, body: FieldEdit):
-    """Manual correction from the UI (tap a field and edit it)."""
-    s = _get(sid)
-    if not any(f["key"] == body.field for f in s["form"]["fields"]):
-        raise HTTPException(400, "Unknown field")
-    s["values"][body.field] = body.value.strip()
-    s["history"].append({"role": "user", "content": f"(I edited {body.field} to {body.value.strip()} myself.)"})
-    return agent.public_state(s)
+    """A correction typed directly on the form."""
+    s = _session(sid)
+    if not agent.edit(s, body.field, body.value):
+        raise HTTPException(400, f"Unknown field: {body.field}")
+    return s.to_dict()
 
 
 @app.get("/")

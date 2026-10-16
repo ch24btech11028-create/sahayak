@@ -1,9 +1,7 @@
-"""Check every Sarvam call Sahayak depends on. Run once your key is in .env:
+"""Check every Sarvam call Sahayak depends on, against the live API.
 
-    .venv/bin/python scripts/smoke_test.py            # all checks
-    .venv/bin/python scripts/smoke_test.py doc samples/id.jpg   # also test Doc AI on a file
-
-Each check prints PASS/FAIL with timing, so you know what works before the build hour.
+    .venv/bin/python scripts/smoke_test.py                                  # all checks
+    .venv/bin/python scripts/smoke_test.py samples/sample_marksheet.png     # also pre-fill from an ID
 """
 
 import base64
@@ -13,75 +11,66 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
 
-from app import agent, config, forms, sarvam  # noqa: E402
+from app import agent, forms, sarvam  # noqa: E402
 
-OUT = Path(__file__).resolve().parent.parent / "samples" / "out"
-results = []
+SAMPLE_FORM = ROOT / "static" / "sample-income-form.png"
+passed: list[bool] = []
 
 
-def check(name, fn):
-    t = time.time()
+def _describe(value) -> str:
+    if isinstance(value, bytes):
+        return f"{len(value):,} bytes of audio"
+    if isinstance(value, tuple) and isinstance(value[0], forms.Form):
+        return f"{value[0].title!r}, {len(value[0].fields)} blanks"
+    return str(value)[:160]
+
+
+def check(name: str, fn):
+    started = time.monotonic()
     try:
         detail = fn()
-        results.append(True)
-        print(f"PASS  {name:<34} {time.time() - t:5.2f}s  {detail}")
+        print(f"PASS  {name:<30} {time.monotonic() - started:5.2f}s  {_describe(detail)}")
+        passed.append(True)
         return detail
     except Exception as e:
-        results.append(False)
-        print(f"FAIL  {name:<34} {time.time() - t:5.2f}s  {type(e).__name__}: {e}")
+        print(f"FAIL  {name:<30} {time.monotonic() - started:5.2f}s  {type(e).__name__}: {e}")
+        passed.append(False)
 
 
 def main():
-    if config.MOCK:
-        print("No SARVAM_API_KEY (or SAHAYAK_MOCK=1). Add your key to .env first.")
-        sys.exit(1)
-    OUT.mkdir(parents=True, exist_ok=True)
+    check("translate (Mayura)", lambda: sarvam.translate("Date of birth", "hi-IN"))
+    check("romanise (transliterate)", lambda: sarvam.romanise("रवि कुमार", "hi-IN"))
 
-    check("translate (mayura:v1)", lambda: sarvam.translate("Date of birth", "hi-IN"))
-    check("transliterate to Latin", lambda: sarvam.to_latin("रवि कुमार", "hi-IN"))
+    speech = check("speak (Bulbul)", lambda: base64.b64decode(sarvam.speak("आपका पूरा नाम क्या है?", "hi-IN")))
+    if speech:
+        check("transcribe (Saaras)", lambda: repr(sarvam.transcribe(speech, "speech.wav", "hi-IN")))
 
-    def tts():
-        wav = base64.b64decode(sarvam.speak("नमस्ते! आपका पूरा नाम क्या है?", "hi-IN"))
-        (OUT / "tts_hi.wav").write_bytes(wav)
-        return f"{len(wav)} bytes → samples/out/tts_hi.wav"
-    check("TTS hi-IN (bulbul:v4-flash)", tts)
-    check("TTS ml-IN (bulbul:v3 fallback)", lambda: f"{len(sarvam.speak('നമസ്കാരം', 'ml-IN'))} b64 chars")
+    scan = check("scan form (Sarvam Vision)", lambda: forms.from_scan(
+        sarvam.vision_extract(SAMPLE_FORM.read_bytes(), SAMPLE_FORM.name, "image/png", forms.SCAN_SCHEMA)))
+    if scan:
+        form, _ = scan
+        print("      " + ", ".join(f"{f.label} [{f.kind}]" for f in form.fields))
 
-    def stt():
-        # Round-trip: transcribe the audio we just generated.
-        return repr(sarvam.transcribe((OUT / "tts_hi.wav").read_bytes(), "tts_hi.wav", "hi-IN"))
-    check("STT round-trip (saaras:v4 codemix)", stt)
+        def conversation():
+            s = agent.start("hi-IN", form, {})
+            for said in (None, "मेरा नाम सुनीता देवी है और मोबाइल 9123456780"):
+                result = agent.step(s, said)
+                if result["error"]:
+                    raise RuntimeError(result["error"])
+            return json.dumps(s.values, ensure_ascii=False)
+        check("agent step (Sarvam-105B)", conversation)
 
-    def chat():
-        s = agent.create_session("hi-IN", forms.sample_form())
-        first = agent.run_turn(s, "(start)")
-        if first.get("error"):
-            raise RuntimeError(first["error"])
-        second = agent.run_turn(s, "मेरा नाम Ravi Kumar है और मेरा mobile नौ आठ चार शून्य नौ पांच शून्य नौ पांच शून्य है")
-        if second.get("error"):
-            raise RuntimeError(second["error"])
-        return f"greeting={first['reply']!r} | values={json.dumps(s['values'], ensure_ascii=False)} | next={second['reply']!r}"
-    check("agent turns (sarvam-105b JSON)", chat)
+        if len(sys.argv) > 1:
+            path = Path(sys.argv[1])
+            content_type = mimetypes.guess_type(path.name)[0] or "application/pdf"
+            check("pre-fill from ID", lambda: sarvam.vision_extract(
+                path.read_bytes(), path.name, content_type, forms.id_document_schema(form)))
 
-    def scan():
-        path = Path(__file__).resolve().parent.parent / "samples" / "sample_blank_form.png"
-        form, _ = forms.from_scan(sarvam.scan_form(path.read_bytes(), path.name, "image/png"))
-        if not form["fields"]:
-            raise RuntimeError("no fields found")
-        return f"{form['title']!r}: " + ", ".join(f"{f['label']} [{f['kind']}]" for f in form["fields"])
-    check("form scan (Sarvam Vision)", scan)
-
-    if len(sys.argv) >= 3 and sys.argv[1] == "doc":
-        path = Path(sys.argv[2])
-        ctype = mimetypes.guess_type(path.name)[0] or "application/pdf"
-        check("Doc AI extract", lambda: sarvam.extract_fields(path.read_bytes(), path.name, ctype,
-                                                               config.FORM["fields"]))
-
-    ok = sum(results)
-    print(f"\n{ok}/{len(results)} checks passed")
-    sys.exit(0 if ok == len(results) else 1)
+    print(f"\n{sum(passed)}/{len(passed)} checks passed")
+    sys.exit(0 if all(passed) else 1)
 
 
 if __name__ == "__main__":
