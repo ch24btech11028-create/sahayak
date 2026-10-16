@@ -35,6 +35,9 @@ cp .env.example .env                                   # add SARVAM_API_KEY
 
 The camera and microphone need `localhost` or HTTPS.
 
+**Deploy on Render:** New → Blueprint, pick this repo (it reads `render.yaml`), and enter
+`SARVAM_API_KEY` when asked. Render serves it over HTTPS, so the camera and mic work.
+
 ## How it works
 
 ```
