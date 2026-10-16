@@ -52,14 +52,15 @@ SESSIONS: dict[str, Session] = {}
 
 
 def start(lang: str, form: Form, prefilled: dict[str, str]) -> Session:
-    s = Session(lang, form, local_labels=_translate_labels(form, lang))
+    """Create a session. Field labels are translated separately (see translate_labels)."""
+    s = Session(lang, form)
     for key, value in prefilled.items():
         s.set(key, value)
     SESSIONS[s.id] = s
     return s
 
 
-def _translate_labels(form: Form, lang: str) -> dict[str, str]:
+def translate_labels(form: Form, lang: str) -> dict[str, str]:
     """Field labels in the user's language, translated in parallel and cached across sessions."""
     todo = [f.label for f in form.fields if (f.label, lang) not in _label_cache]
     if todo:
@@ -101,6 +102,10 @@ def _prompt(s: Session) -> str:
     for f in s.form.askable:
         options = f"; options: {' / '.join(f.options)}" if f.options else ""
         rows.append(f"- {f.key} ({f.label}; {f.hint}{options}): {s.values.get(f.key) or 'MISSING'}")
+    missing = [f for f in s.form.askable if not s.values.get(f.key)]
+    next_step = (f"You last asked about {missing[0].key} ({missing[0].label}), so a short answer like a bare name "
+                 f"or number is most likely its value. After saving it, ask about the next MISSING field in order."
+                 if missing else "Every field is filled: read all values back and ask the user to confirm.")
     by_hand = [f.label for f in s.form.fields if not f.askable]
     by_hand_line = f"\nThe user writes these by hand; never ask for them: {', '.join(by_hand)}." if by_hand else ""
     return f"""You are Sahayak, a warm, patient assistant helping someone fill the "{s.form.title}" by voice.
@@ -112,13 +117,15 @@ In replies, always write numbers and dates as digits (9840950950, 12/03/2003, 20
 Current form:
 {chr(10).join(rows)}{by_hand_line}
 
+{next_step}
+
 How to work:
 1. Put every value from the user's latest message into `updates`, including corrections to earlier values.
 2. Write values in English: names in English letters ("Ravi Kumar"), dates as DD/MM/YYYY, mobile numbers as
    10 digits, amounts as rupee digits ("2 lakh" -> "200000"), other answers as short English ("किसान" -> "Farmer").
    For fields with options the value must be exactly one option. Convert spoken numbers to digits.
 3. If a value is unclear or invalid (e.g. a 9-digit mobile), don't save it; ask again politely.
-4. Ask for ONE missing field at a time, in order. For fields with options, say the options.
+4. Ask for ONE missing field at a time, in the order listed. For fields with options, say the options.
 5. When nothing is MISSING, read all values back briefly and ask the user to confirm. Set done=true only after
    they confirm. If they correct something, update it and read back again.
 6. Never ask for Aadhaar, bank account, passwords or OTPs.

@@ -227,6 +227,10 @@ Current form:
 - {key} ({label}; {hint}[; options: A / B / C]): {current value or MISSING}     <- one line per askable field
 [The user writes these by hand; never ask for them: {sensitive labels}.]
 
+You last asked about {first missing key} ({label}), so a short answer like a bare name or number is most likely
+its value. After saving it, ask about the next MISSING field in order.
+   <- or, when nothing is missing: "Every field is filled: read all values back and ask the user to confirm."
+
 How to work:
 1. Put every value from the user's latest message into `updates`, including corrections to earlier values.
 2. Write values in English: names in English letters ("Ravi Kumar"), dates as DD/MM/YYYY, mobile numbers as
@@ -289,7 +293,9 @@ Routes:
   Cache successful results per language; on failure return the English text with audio_b64 null.
 - POST /api/form/scan (multipart: lang, file) -> vision_extract with SCAN_SCHEMA, forms.from_scan,
   422 "No blanks were found. Retake the photo with the whole page in view and good light." if no fields,
-  502 if Sarvam Vision fails; then agent.start and agent.step(s, None).
+  502 if Sarvam Vision fails; then agent.start and agent.step(s, None), translating the field labels
+  in a background thread at the same time (the greeting doesn't need them).
+- On startup, pre-generate the spoken instruction for all 11 languages in a background thread.
 - POST /api/turn (multipart: session_id, and either audio file or text) -> transcribe if audio,
   400 "Nothing was heard. Tap the mic and speak, or type your answer." if empty, then agent.step.
 - POST /api/document (multipart: session_id, file) -> vision_extract with id_document_schema,

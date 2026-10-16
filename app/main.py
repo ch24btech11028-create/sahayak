@@ -1,6 +1,9 @@
 """Sahayak HTTP API. Run with:  uvicorn app.main:app --port 8000"""
 
+import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from functools import cache
 from pathlib import Path
 
@@ -15,7 +18,22 @@ STATIC = Path(__file__).resolve().parent.parent / "static"
 DOCUMENT_TYPES = {"application/pdf", "image/png", "image/jpeg"}
 SCAN_INSTRUCTION = "Hold your form in front of the camera so the whole page is visible, then press the button."
 
-app = FastAPI(title="Sahayak")
+def _warm_instructions():
+    """Pre-generate the spoken scan instruction for every language, so it plays instantly."""
+    for code in config.LANGUAGES:
+        try:
+            _instruction(code)
+        except Exception:
+            pass  # generated on demand instead
+
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    threading.Thread(target=_warm_instructions, daemon=True).start()
+    yield
+
+
+app = FastAPI(title="Sahayak", lifespan=lifespan)
 
 
 class Timer:
@@ -101,7 +119,11 @@ def scan_form(lang: str = Form(...), file: UploadFile = File(...)):
     if not form.fields:
         raise HTTPException(422, "No blanks were found. Retake the photo with the whole page in view and good light.")
     s = agent.start(lang, form, prefilled)
-    return _reply(s, agent.step(s, None), timer)
+    with ThreadPoolExecutor(max_workers=1) as pool:  # translate labels while the agent greets
+        labels = pool.submit(agent.translate_labels, form, lang)
+        greeting = agent.step(s, None)
+        s.local_labels = labels.result()
+    return _reply(s, greeting, timer)
 
 
 @app.post("/api/turn")
