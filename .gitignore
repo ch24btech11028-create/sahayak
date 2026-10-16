@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.env
+samples/out/
+.DS_Store
+CLAUDE.md
+.claude/
+
+# Study material, not part of the app
+sarvam-docs/
+guide/
+Sarvam_AI_Developer_Guide.pdf

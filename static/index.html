@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sahayak · Voice Form Filler</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div id="mock-banner" class="banner" hidden>Mock mode: no SARVAM_API_KEY found, so responses are canned. Add your key to <code>.env</code> and restart.</div>
+
+<header class="top">
+  <div class="brand"><span class="logo">स</span><div><b>Sahayak</b><small>Speak your form, in your language</small></div></div>
+  <div class="top-right">
+    <span id="lang-pill" class="pill" hidden></span>
+    <button id="restart" class="ghost" hidden>New form</button>
+  </div>
+</header>
+
+<!-- Step 1: choose language -->
+<section id="welcome" class="welcome">
+  <h1>Which language do you want to speak?</h1>
+  <p class="muted">आप किस भाषा में बात करना चाहते हैं? · మీరు ఏ భాషలో మాట్లాడాలనుకుంటున్నారు?</p>
+  <div id="lang-grid" class="lang-grid"></div>
+  <p class="muted small">Sahayak asks one question at a time and fills the <b id="form-title-welcome"></b> for you.</p>
+</section>
+
+<!-- Step 2: conversation + live form -->
+<main id="workspace" class="workspace" hidden>
+  <section class="talk">
+    <div id="chat" class="chat" aria-live="polite"></div>
+
+    <div class="controls">
+      <div id="status" class="status">Ready</div>
+      <button id="mic" class="mic" aria-label="Tap to speak">
+        <svg viewBox="0 0 24 24" width="34" height="34" aria-hidden="true"><path fill="currentColor" d="M12 15a3 3 0 0 0 3-3V6a3 3 0 0 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.92V21h2v-2.08A7 7 0 0 0 19 12h-2Z"/></svg>
+      </button>
+      <div class="hint">Tap to speak, tap again to send · or hold <kbd>Space</kbd></div>
+      <form id="text-form" class="text-form">
+        <input id="text-input" placeholder="…or type your answer" autocomplete="off">
+        <button class="ghost" type="submit">Send</button>
+      </form>
+      <div class="row">
+        <label class="ghost upload">📎 Upload ID / marksheet to pre-fill
+          <input id="doc-input" type="file" accept="application/pdf,image/png,image/jpeg" hidden>
+        </label>
+        <span id="timings" class="timings"></span>
+      </div>
+    </div>
+  </section>
+
+  <section class="paper-wrap">
+    <article id="paper" class="paper">
+      <div class="paper-head">
+        <div class="emblem">⚖</div>
+        <div>
+          <div class="dept">Government Scholarship Portal</div>
+          <h2 id="form-title"></h2>
+        </div>
+        <div id="stamp" class="stamp" hidden>Completed</div>
+      </div>
+      <div class="progress"><div id="progress-bar"></div></div>
+      <div id="progress-text" class="progress-text"></div>
+      <ol id="fields" class="fields"></ol>
+      <div class="paper-foot">
+        <span>Filled with Sahayak · powered by Sarvam AI</span>
+        <button id="print" class="primary" hidden>Print / Save PDF</button>
+      </div>
+    </article>
+  </section>
+</main>
+
+<audio id="player"></audio>
+<script src="/static/app.js"></script>
+</body>
+</html>
