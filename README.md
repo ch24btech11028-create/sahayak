@@ -1,9 +1,10 @@
-# Sahayak — show it any form, then just talk
+# Sahayak — show it your form, then just talk
 
 Government forms in India are printed in English, but most of the people who need them don't read
 English comfortably. Sahayak lets anyone fill a paper form by talking, in their own language.
 
-1. **Scan.** Hold any paper form up to the camera. Sarvam Vision reads every blank on the page.
+1. **Scan.** Hold a printed, single-page form up to the camera. Sarvam Vision reads every blank on
+   the page, and anything misread can be removed or corrected.
 2. **Talk.** Sahayak asks about each blank, one at a time, out loud in 11 Indian languages, and
    understands answers mixed with English ("मेरा mobile number है…").
 3. **Done.** Answers are written on the form in English, checked (dates, mobile numbers, amounts,

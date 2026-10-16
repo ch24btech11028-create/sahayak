@@ -188,3 +188,14 @@ def edit(s: Session, key: str, value: str) -> bool:
     s.values[key] = value.strip()
     s.history.append({"role": "user", "content": f"(I corrected {key} to {value.strip()!r} myself.)"})
     return True
+
+
+def remove_field(s: Session, key: str) -> bool:
+    """Drop a blank that Sarvam Vision detected by mistake."""
+    f = s.form.get(key)
+    if not f:
+        return False
+    s.form.fields.remove(f)
+    s.values.pop(key, None)
+    s.history.append({"role": "user", "content": f"(I removed the field {f.label!r}; it is not on my form.)"})
+    return True

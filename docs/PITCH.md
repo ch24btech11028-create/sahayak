@@ -22,9 +22,9 @@
 > checks the mobile number, turns "ఒకటిన్నర లక్ష" into 150000, ticks the right box, and reads
 > everything back before stamping it complete.
 >
-> It works on **any** form, in 11 Indian languages, and it never asks for Aadhaar or bank
-> details out loud. Every step runs on Sarvam: Vision to read, Saaras to listen, Sarvam-105B to
-> think, Bulbul to speak.
+> Nothing in it is written for this one form: it reads the blanks from the photo. It speaks 11
+> Indian languages and never asks for Aadhaar or bank details out loud. And it runs on Sarvam
+> end to end: Vision reads, Saaras listens, Sarvam-105B thinks, Bulbul speaks.
 >
 > Sahayak means "helper". That's what it is: a helper for every form, in every language.
 
@@ -68,8 +68,10 @@ needs no thought.
   people already have**, and from **speech**, which everyone can use.
 
 ### What Sahayak does
-1. **Reads any paper form.** One Sarvam Vision call returns the form's title, every blank in
-   order, and the options of tick-box fields. Nothing is hard-coded per form.
+1. **Reads the form from a photo.** One Sarvam Vision call returns the form's title, every blank
+   in order, and the options of tick-box fields. Nothing is hard-coded per form. Today it works best
+   on clear, printed, single-page forms; a wrongly detected field can be removed and any answer
+   corrected by tapping it.
 2. **Understands each field.** Each blank gets a kind (name, date, mobile, number, choice, text,
    sensitive), which decides how answers are cleaned and checked.
 3. **Holds a conversation.** It asks one question at a time in the user's language, accepts
@@ -93,7 +95,8 @@ needs no thought.
 | Labels and instructions | **Mayura** | Translates field labels and the scan instruction into the user's language |
 | English names | **Transliterate** | "रवि कुमार" → "Ravi Kumar" for the English form |
 
-That is six Sarvam capabilities working in one flow, which is the point of the event's theme.
+Each model does one job that the flow needs, and every call is tested against the live API by
+`scripts/smoke_test.py`.
 
 ### Architecture (one breath)
 A FastAPI backend with four small modules: `sarvam.py` makes the API calls, `forms.py` knows
@@ -129,15 +132,22 @@ one agent step, validation, then the spoken reply.
   - **Phone line:** run the same flow on a Sarvam Voice Agent for people without smartphones.
   - **Write back onto the original:** print answers in the right place on the scanned page.
   - **Explain the form:** "what is this certificate for, which documents do I need".
-- **Why it can scale:** nothing is per-form. A new form is just a new photo.
+- **Why it can scale:** nothing is per-form, so a new form is just a new photo. Harder cases
+  (multi-page forms, tables, handwriting, writing answers back onto the original page) are the
+  next steps, not claims for today.
 
 ---
 
 ## 4. Likely questions and short answers
 
-**Does it only work for one form?**
-No. It reads whatever form you show it. The sample is an income certificate, but nothing in the
-code is specific to it.
+**Does it work on any form?**
+Nothing in the code is written for one form; it reads the blanks from the photo. It works best on
+clear, printed, single-page forms, which is what we're demoing. Multi-page forms, dense tables and
+handwritten forms are next.
+
+**Do the answers go back onto the original paper?**
+Not yet. Today it produces a clean, completed copy of the form with the same fields. Printing the
+answers onto the original page needs each field's position, which is the next step for common forms.
 
 **What if Sarvam Vision misreads a field?**
 Every value is visible on the form while you talk and can be tapped and corrected. The read-back
@@ -172,8 +182,8 @@ in code, and making sure "done" really means the user confirmed.
 
 ## 5. One-line versions
 
-- **Tagline:** Show it any form, then just talk.
-- **For a slide:** Sahayak reads any paper form with Sarvam Vision and fills it through a voice
+- **Tagline:** Show it your form, then just talk.
+- **For a slide:** Sahayak reads a paper form with Sarvam Vision and fills it through a voice
   conversation in 11 Indian languages.
 - **If asked "why Sarvam?":** Indian languages, mixed speech and Indian documents are exactly
-  what Sarvam's models are built for, and Sahayak uses six of them in one flow.
+  what Sarvam's models are built for, and the whole flow runs on them end to end.

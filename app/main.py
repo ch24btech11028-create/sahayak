@@ -154,6 +154,15 @@ def edit_field(sid: str, body: FieldEdit):
     return s.to_dict()
 
 
+@app.delete("/api/session/{sid}/field/{key}")
+def remove_field(sid: str, key: str):
+    """Remove a blank that was detected by mistake."""
+    s = _session(sid)
+    if not agent.remove_field(s, key):
+        raise HTTPException(400, f"Unknown field: {key}")
+    return s.to_dict()
+
+
 @app.get("/")
 def index():
     return FileResponse(STATIC / "index.html")

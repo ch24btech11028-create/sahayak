@@ -245,6 +245,12 @@ function fieldRow(f, session, changed, isCurrent) {
   const li = el("li", isCurrent ? "current" : null);
   const label = el("div", "f-label", f.label);
   if (f.local_label && f.local_label !== f.label) label.append(el("span", "local", f.local_label));
+  if (!session.done) {
+    const remove = el("button", "f-remove", "Not on my form");
+    remove.type = "button";
+    remove.onclick = () => removeField(f.key);
+    label.append(remove);
+  }
   li.append(label);
 
   const value = session.values[f.key] || "";
@@ -281,6 +287,12 @@ async function saveEdit(field, value) {
     renderForm(await api(`/api/session/${state.session.id}/field`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ field, value }),
     }), [field]);
+  } catch (e) { addMessage("err", e.message); }
+}
+
+async function removeField(key) {
+  try {
+    renderForm(await api(`/api/session/${state.session.id}/field/${encodeURIComponent(key)}`, { method: "DELETE" }));
   } catch (e) { addMessage("err", e.message); }
 }
 

@@ -117,6 +117,10 @@ button { cursor: pointer; }
 .fields li::before { content: counter(f) "."; font-weight: 600; color: var(--teal-2); padding-top: 1px; }
 .f-label { font-size: 15px; font-weight: 600; display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
 .f-label .local { font-weight: 400; color: var(--teal-2); }
+.f-remove { margin-left: auto; background: none; border: 0; padding: 0 2px; font-size: 13px; color: var(--teal-2);
+  text-decoration: underline; text-underline-offset: 2px; opacity: 0; }
+.fields li:hover .f-remove, .f-remove:focus-visible { opacity: 1; }
+@media (hover: none) { .f-remove { opacity: .7; } }
 .f-value { grid-column: 2; min-height: 40px; margin-top: 2px; padding: 2px 6px 0; font-family: var(--hand);
   font-size: 26px; line-height: 1.4; color: var(--violet); outline: none;
   background: linear-gradient(to top, var(--rule) 1px, transparent 1px); }
