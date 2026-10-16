@@ -2,6 +2,7 @@
 
 import base64
 import json
+import re
 import time
 from functools import cache
 
@@ -12,6 +13,7 @@ from . import config
 VISION_TIMEOUT_S = 90
 VISION_POLL_S = 1.5
 TTS_MAX_CHARS = 2500
+SPEECH_PACE = 0.95  # a touch slower than default: easier to follow on a laptop speaker
 
 
 @cache
@@ -26,11 +28,18 @@ def transcribe(audio: bytes, filename: str, lang: str) -> str:
     return (r.transcript or "").strip()
 
 
+def _speakable(text: str) -> str:
+    """Read mobile numbers digit by digit in two groups ("98765, 43210"), so they are easy to check."""
+    return re.sub(r"(?<!\d)([6-9]\d{4})(\d{5})(?!\d)",
+                  lambda m: f"{' '.join(m[1])}, {' '.join(m[2])}", text)
+
+
 def speak(text: str, lang: str) -> str:
     """Bulbul text-to-speech. Returns one base64 WAV for the browser to play."""
     voice = config.LANGUAGES[lang]
     r = _client().text_to_speech.convert(
-        text=text[:TTS_MAX_CHARS], language_code=lang, model=voice.tts_model, speaker=voice.speaker)
+        text=_speakable(text)[:TTS_MAX_CHARS], language_code=lang, model=voice.tts_model,
+        speaker=voice.speaker, pace=SPEECH_PACE)
     # The REST response is a list of base64 chunks; decode and re-encode them as one file.
     return base64.b64encode(base64.b64decode("".join(r.audios))).decode()
 
