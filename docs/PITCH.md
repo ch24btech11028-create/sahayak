@@ -37,7 +37,8 @@ needs no thought.
 
 **Before you go up**
 - Open http://localhost:8000 once while online, so the fonts are cached.
-- Have a printed form ready (the sample in `static/sample-income-form.png`, or a real one).
+- Have your chosen printed, single-page form ready (or print `static/sample-income-form.png`).
+  Scan it 3–4 times beforehand so you know it reads cleanly.
 - Test the mic and camera once at the venue, with the laptop volume up.
 - Keep a second tab already on the scan screen as a backup.
 
@@ -51,6 +52,7 @@ needs no thought.
 5. Say "yes" to the read-back. The stamp lands. Click **Save as PDF**.
 
 **If something fails**
+- A blank was detected wrongly: click **Not on my form** next to it and carry on.
 - No camera: **Upload a photo** or **Scan a sample photo**.
 - Wi-Fi or mic trouble: type the answers in the box; the flow is identical.
 - Say calmly: "the network is slow, so I'll type the answer", and carry on. Judges respect a
@@ -150,8 +152,8 @@ Not yet. Today it produces a clean, completed copy of the form with the same fie
 answers onto the original page needs each field's position, which is the next step for common forms.
 
 **What if Sarvam Vision misreads a field?**
-Every value is visible on the form while you talk and can be tapped and corrected. The read-back
-step also catches mistakes before completion.
+A wrongly detected blank can be removed with "Not on my form", and every answer is visible on the
+form and can be tapped and corrected. The read-back step also catches mistakes before completion.
 
 **How do you stop the AI from writing wrong data?**
 The model never writes to the form directly. Code checks every value for its field type, and the

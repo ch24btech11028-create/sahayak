@@ -53,7 +53,7 @@ read-back with nothing left to change.
 | `app/sarvam.py` | One function per Sarvam API call; the only module that uses the SDK |
 | `app/forms.py` | Form and field model, reading a scan, normalising and validating answers |
 | `app/agent.py` | Sessions and the conversation: prompt, agent step, re-ask on bad values |
-| `app/main.py` | HTTP routes |
+| `app/main.py` | HTTP routes: scan, turn, document pre-fill, edit or remove a field |
 | `static/` | Single-page UI: language picker, camera scan, push-to-talk, the live form |
 | `scripts/smoke_test.py` | Live check of every Sarvam call |
 | `docs/PITCH.md` | The pitch and a full explanation |

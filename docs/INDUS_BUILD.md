@@ -23,7 +23,7 @@ Total: 6 phases. Phases 1–4 are the backend, phase 5 is the UI, phase 6 is the
 # Part 1 — Master prompt (paste this first)
 
 ~~~text
-You are building "Sahayak", a web app that lets someone fill any paper government form by talking
+You are building "Sahayak", a web app that lets someone fill a printed paper government form by talking
 in their own Indian language.
 
 USER FLOW
@@ -260,6 +260,9 @@ How to work:
 
 7. edit(session, key, value): store a manual correction and add
    "(I corrected {key} to {value!r} myself.)" to history.
+
+8. remove_field(session, key): drop a blank that Sarvam Vision detected by mistake (remove it from
+   the form and its value) and add "(I removed the field {label!r}; it is not on my form.)" to history.
 Stop after this phase.
 ~~~
 
@@ -292,6 +295,7 @@ Routes:
 - POST /api/document (multipart: session_id, file) -> vision_extract with id_document_schema,
   fill_from_document, then agent.step with the note; changed = union of both.
 - POST /api/session/{id}/field (JSON {field, value}) -> agent.edit, returns session.to_dict(); 400 if unknown field.
+- DELETE /api/session/{id}/field/{key} -> agent.remove_field, returns session.to_dict(); 400 if unknown field.
 - GET / serves static/index.html; mount /static.
 Stop after this phase.
 ~~~
@@ -337,7 +341,8 @@ SCREENS
      the translated label. Text answers are contentEditable lines in Kalam violet; editing and blurring
      POSTs a correction. Choice fields render as tick boxes (clicking one saves it). Sensitive fields
      show "Write this yourself on the paper form. Sahayak never asks for it." The next missing field
-     has an "Asking now" tag.
+     has an "Asking now" tag. Until the form is done, each field has a small "Not on my form" link
+     (shown on hover, always on touch screens) that calls the DELETE route.
    - New answers "write" in with a left-to-right clip-path animation. When done, a round violet
      "Confirmed" stamp (with the language's "complete" word) lands with a short scale-down animation,
      and a "Save as PDF" button (window.print; print CSS shows only the form) appears.
@@ -386,7 +391,8 @@ Run this conversation on the sample income-certificate form, in Hindi. All of th
 | 9 | "नहीं, आय दो लाख है" | Income becomes `200000`; it reads back again; still not complete |
 | 10 | "हाँ सब सही है" | Stamp lands; "Save as PDF" appears; it tells you to print and sign |
 
-Also check: uploading a `.txt` is refused with a clear message, the ID pre-fill fills the name and
+Also check: "Not on my form" removes a field and Sahayak never asks about it, uploading a `.txt` is
+refused with a clear message, the ID pre-fill fills the name and
 date of birth from a marksheet photo, and no field asking for Aadhaar or bank details is ever spoken.
 
 ---
