@@ -6,7 +6,7 @@ English comfortably. Sahayak lets anyone fill a paper form by talking, in their 
 1. **Scan.** Hold a printed, single-page form up to the camera. Sarvam Vision reads every blank on
    the page, and anything misread can be removed or corrected.
 2. **Talk.** Sahayak asks about each blank, one at a time, out loud in 11 Indian languages, and
-   understands answers mixed with English ("मेरा mobile number है…").
+   listens hands-free the whole time: just answer, and it replies when you pause. It understands answers mixed with English ("मेरा mobile number है…").
 3. **Done.** Answers are written on the form in English, checked (dates, mobile numbers, amounts,
    tick boxes), read back for confirmation, and ready to print or save as a PDF.
 

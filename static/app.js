@@ -6,8 +6,7 @@ const state = {
   lang: null,        // language from /api/config
   session: null,     // latest session state from the server
   busy: false,       // a request or recording is in progress
-  recorder: null,
-  chunks: [],
+  recorder: null,    // the current answer being recorded
   camera: null,      // { stream, purpose: "form" | "id" }
   lastAudio: null,
   scanUrl: null,     // object URL of the scanned photo, for "View photo"
@@ -86,6 +85,7 @@ function takeFile(event, purpose) {
 
 async function openCamera(purpose) {
   $("player").pause();
+  pauseListening();
   $("camera").hidden = false;
   $("shutter").disabled = true;
   $("camera-msg").textContent = purpose === "id"
@@ -107,6 +107,7 @@ function closeCamera() {
   state.camera?.stream?.getTracks().forEach((t) => t.stop());
   $("video").srcObject = null;
   $("camera").hidden = true;
+  listenSoon();
 }
 
 $("camera-cancel").onclick = closeCamera;
@@ -125,6 +126,7 @@ $("shutter").onclick = () => {
 
 // Send a photo to Sarvam Vision: a form starts a new session, an ID pre-fills the open one.
 async function scan(file, purpose) {
+  openMic();
   const url = URL.createObjectURL(file);
   const isPdf = file.type === "application/pdf";
   $("scan-img").hidden = isPdf;
@@ -153,7 +155,7 @@ async function scan(file, purpose) {
     $("scanning").classList.add("failed");
     $("scan-text").textContent = e.message;
     $("scan-retry").hidden = false;
-    $("scan-retry").onclick = () => { $("scanning").hidden = true; };
+    $("scan-retry").onclick = () => { $("scanning").hidden = true; listenSoon(); };
   }
 }
 
@@ -190,7 +192,7 @@ function handleTurn(r) {
   state.lastAudio = r.audio_b64;
   $("replay").hidden = !r.audio_b64;
   if (r.audio_b64) playAudio(r.audio_b64, true);
-  else setBusy(false, nextPrompt());
+  else { setBusy(false, nextPrompt()); listenSoon(); }
 }
 
 async function sendTurn(fields, label) {
@@ -198,8 +200,9 @@ async function sendTurn(fields, label) {
   try {
     handleTurn(await api("/api/turn", { method: "POST", body: form({ session_id: state.session.id, ...fields }) }));
   } catch (e) {
-    addMessage("err", e.message);
+    if (!e.message.startsWith("Nothing was heard")) addMessage("err", e.message);
     setBusy(false, nextPrompt());
+    listenSoon();
   }
 }
 
@@ -208,10 +211,13 @@ $("text-form").onsubmit = (e) => {
   const text = $("text-input").value.trim();
   if (!text || !state.session || state.busy) return;
   $("text-input").value = "";
+  pauseListening();
   sendTurn({ text }, "Thinking");
 };
 
-const nextPrompt = () => (state.session?.done ? "Your form is complete" : "Tap the mic to answer");
+const nextPrompt = () => (state.session?.done ? "Your form is complete"
+  : state.micBlocked ? "The microphone is blocked. Allow it in the browser, or type your answers"
+  : state.listening ? "Listening… speak your answer" : "Listening paused. Tap the mic to continue");
 
 // ------------------------------------------------------------------ the form on the right
 function renderForm(session, changed = []) {
@@ -301,60 +307,142 @@ $("print").onclick = () => window.print();
 // ------------------------------------------------------------------ audio out
 function playAudio(b64, isReply = false) {
   const player = $("player");
+  pauseListening();             // never record Sahayak's own voice
   player.src = `data:audio/wav;base64,${b64}`;
   if (isReply) {
-    setBusy(false, "Speaking. Tap the mic to interrupt");
-    player.onended = () => setStatus(nextPrompt());
+    setBusy(false, "Speaking…");
+    player.onended = () => { setStatus(nextPrompt()); listenSoon(); };
   }
-  player.play().catch(() => isReply && setStatus("Press “Hear it again” to listen"));
+  player.play().catch(() => {
+    if (!isReply) return;
+    setStatus("Press “Hear it again” to listen");
+    listenSoon();
+  });
 }
 $("replay").onclick = () => state.lastAudio && playAudio(state.lastAudio, true);
 
-// ------------------------------------------------------------------ audio in (push-to-talk)
+// ------------------------------------------------------------------ audio in (hands-free)
+// The mic stays open for the whole form. Each answer is cut when the user pauses, sent, and
+// listening resumes once Sahayak has finished speaking. The mic button pauses and resumes this.
 const RECORDING_TYPES = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4", "audio/ogg"];
 const MIN_RECORDING_BYTES = 1200;
+const VAD = {
+  checkMs: 50,
+  calibrateMs: 300,        // measure the room's background noise first
+  minSpeechMs: 250,        // this much speech counts as the user talking
+  endSilenceMs: 1300,      // pause that ends an answer
+  maxAnswerMs: 25000,      // stay under the 30 s speech-to-text limit
+  restartAfterMs: 15000,   // nothing said: start a fresh recording
+};
+const mic = { stream: null, analyser: null, buffer: null };
+state.listening = true;    // hands-free is on unless the user pauses it
 
-async function startRecording() {
-  if (state.busy || state.recorder || !state.session) return;
-  $("player").pause(); // barge-in: stop Sahayak talking
+async function openMic() {
+  if (mic.stream) return true;
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-    const mimeType = RECORDING_TYPES.find((t) => MediaRecorder.isTypeSupported(t));
-    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : {});
-    state.recorder = recorder;
-    state.chunks = [];
-    recorder.ondataavailable = (e) => e.data.size && state.chunks.push(e.data);
-    recorder.onstop = () => { stream.getTracks().forEach((t) => t.stop()); sendRecording(recorder.mimeType); };
-    recorder.start();
-    $("mic").classList.add("rec");
-    $("mic").setAttribute("aria-label", "Tap to finish");
-    setStatus("Listening. Tap again when you finish");
+    mic.stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
+    });
+    const ctx = new AudioContext();
+    await ctx.resume();
+    mic.analyser = ctx.createAnalyser();
+    mic.analyser.fftSize = 1024;
+    ctx.createMediaStreamSource(mic.stream).connect(mic.analyser);
+    mic.buffer = new Float32Array(mic.analyser.fftSize);
+    return true;
   } catch {
-    addMessage("err", "The microphone is blocked. Allow microphone access in the browser, or type your answer.");
+    state.listening = false;
+    state.micBlocked = true;
+    updateMicButton();
+    setStatus(nextPrompt());
+    return false;
   }
 }
 
-function stopRecording() {
-  if (!state.recorder) return;
-  $("mic").classList.remove("rec");
-  $("mic").setAttribute("aria-label", "Tap to answer");
-  state.recorder.stop();
+function micLevel() {
+  mic.analyser.getFloatTimeDomainData(mic.buffer);
+  let sum = 0;
+  for (const v of mic.buffer) sum += v * v;
+  return Math.sqrt(sum / mic.buffer.length);
 }
 
-function sendRecording(mimeType) {
-  state.recorder = null;
-  const blob = new Blob(state.chunks, { type: mimeType || "audio/webm" });
-  if (blob.size < MIN_RECORDING_BYTES) return setStatus("That was too short. Tap and speak again");
-  const ext = mimeType.includes("mp4") ? "m4a" : mimeType.includes("ogg") ? "ogg" : "webm";
+const listenSoon = () => setTimeout(listen, 200);
+
+async function listen() {
+  const s = state.session;
+  if (!state.listening || state.busy || state.recorder || !s || s.done) return;
+  if (!$("player").paused || !$("camera").hidden || !$("scanning").hidden) return;
+  if (!(await openMic()) || state.recorder) return;
+
+  const mimeType = RECORDING_TYPES.find((t) => MediaRecorder.isTypeSupported(t));
+  const recorder = new MediaRecorder(mic.stream, mimeType ? { mimeType } : {});
+  const chunks = [];
+  let elapsed = 0, speech = 0, silence = 0, spoke = false;
+  const calibration = [];
+  let threshold = null;
+
+  state.recorder = recorder;
+  recorder.ondataavailable = (e) => e.data.size && chunks.push(e.data);
+  recorder.onstop = () => {
+    clearInterval(timer);
+    state.recorder = null;
+    updateMicButton();
+    if (recorder.discard || !spoke) return listenSoon();
+    sendRecording(new Blob(chunks, { type: recorder.mimeType || "audio/webm" }));
+  };
+  recorder.start(250);
+  updateMicButton();
+  setStatus("Listening… speak your answer");
+
+  const timer = setInterval(() => {
+    const level = micLevel();
+    elapsed += VAD.checkMs;
+    if (threshold === null) {
+      calibration.push(level);
+      if (elapsed < VAD.calibrateMs) return;
+      const noise = calibration.reduce((a, b) => a + b, 0) / calibration.length;
+      threshold = Math.min(0.05, Math.max(0.012, noise * 2.5));
+    }
+    $("mic").style.setProperty("--level", Math.min(1, level / (threshold * 4)).toFixed(2));
+    if (level > threshold) {
+      speech += VAD.checkMs;
+      silence = 0;
+      if (!spoke && speech >= VAD.minSpeechMs) { spoke = true; setStatus("Listening… I'll reply when you pause"); }
+    } else {
+      silence += VAD.checkMs;
+      if (!spoke) speech = Math.max(0, speech - VAD.checkMs);
+    }
+    if ((spoke && silence >= VAD.endSilenceMs) || elapsed >= VAD.maxAnswerMs) recorder.stop();
+    else if (!spoke && elapsed >= VAD.restartAfterMs) { recorder.discard = true; recorder.stop(); }
+  }, VAD.checkMs);
+}
+
+// Stop the current recording without sending it (Sahayak is about to speak, or the user typed).
+function pauseListening() {
+  if (state.recorder) { state.recorder.discard = true; state.recorder.stop(); }
+}
+
+function sendRecording(blob) {
+  if (blob.size < MIN_RECORDING_BYTES) return listenSoon();
+  const ext = blob.type.includes("mp4") ? "m4a" : blob.type.includes("ogg") ? "ogg" : "webm";
   sendTurn({ audio: new File([blob], `speech.${ext}`, { type: blob.type }) }, "Understanding your answer");
 }
 
-$("mic").onclick = () => (state.recorder ? stopRecording() : startRecording());
+function updateMicButton() {
+  const recording = Boolean(state.recorder);
+  $("mic").classList.toggle("rec", recording);
+  $("mic").classList.toggle("paused", !state.listening);
+  $("mic").setAttribute("aria-label", state.listening ? "Pause listening" : "Resume listening");
+  if (!recording) $("mic").style.removeProperty("--level");
+}
 
-// Hold Space to talk, but only when nothing else has focus, so typing never opens the mic.
-const spaceToTalk = (e) => e.code === "Space" && [document.body, $("mic")].includes(document.activeElement);
-document.addEventListener("keydown", (e) => { if (spaceToTalk(e) && !e.repeat) { e.preventDefault(); startRecording(); } });
-document.addEventListener("keyup", (e) => { if (spaceToTalk(e)) { e.preventDefault(); stopRecording(); } });
+$("mic").onclick = () => {
+  state.micBlocked = false;   // let the user retry after allowing the mic
+  state.listening = !state.listening;
+  updateMicButton();
+  if (state.listening) { setStatus("Listening… speak your answer"); listen(); }
+  else { pauseListening(); setStatus("Listening paused. Tap the mic to continue"); }
+};
 
 // ------------------------------------------------------------------ status line
 function setStatus(text) { $("status").textContent = text; }

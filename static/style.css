@@ -81,7 +81,9 @@ button { cursor: pointer; }
 .mic:hover { transform: scale(1.04); }
 .mic:disabled { background: var(--teal-2); color: var(--teal-soft); cursor: progress; transform: none; }
 .mic .ring { position: absolute; inset: 0; border-radius: 50%; border: 2px solid var(--marigold); opacity: 0; }
-.mic.rec { background: var(--marigold); color: var(--teal); }
+.mic.rec { background: var(--marigold); color: var(--teal);
+  box-shadow: 0 0 0 calc(var(--level, 0) * 26px) #f5a5244d; transition: box-shadow .08s linear; }
+.mic.paused { background: var(--teal-2); color: #fff; }
 .mic.rec .ring { animation: ripple 1.6s ease-out infinite; }
 .mic.rec .ring.r2 { animation-delay: .8s; }
 @keyframes ripple { from { transform: scale(1); opacity: .9; } to { transform: scale(1.9); opacity: 0; } }

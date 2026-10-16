@@ -348,7 +348,7 @@ SCREENS
    - Left (teal): the current question in large type ("long" smaller style if over 110 chars),
      "Hear it again", a scrolling history (previous questions, the user's answers right-aligned
      with a violet border), a 96px round mic button (ripples while recording, spinner while busy),
-     a status line, "Or type your answer" input, "Fill from my ID or marksheet" (opens the camera
+     a status line ("Listening… speak your answer"), "Or type your answer" input, "Fill from my ID or marksheet" (opens the camera
      overlay for an ID), and the stage timings as "Scanning 5.6s, Thinking 0.9s, Voice 1.5s".
    - Right: the form as a paper sheet: seal, "Read from your photo by Sarvam Vision" + "View photo"
      link, the form title, "{answered}/{total} answered", numbered fields with the English label and
@@ -362,10 +362,16 @@ SCREENS
      and a "Save as PDF" button (window.print; print CSS shows only the form) appears.
 
 BEHAVIOUR
-- Push-to-talk: tap the mic to start, tap again to send (also hold Space when nothing is focused, so
-  typing never opens the mic). Pause any playing reply when recording starts (barge-in). Use
-  MediaRecorder with the first supported of audio/webm;codecs=opus, audio/webm, audio/mp4, audio/ogg.
-  Ignore recordings under 1200 bytes ("That was too short").
+- Hands-free listening for the whole form: open the mic once (getUserMedia with echoCancellation,
+  noiseSuppression, autoGainControl) and keep it open. After Sahayak finishes speaking, start a
+  MediaRecorder on that stream (first supported of audio/webm;codecs=opus, audio/webm, audio/mp4,
+  audio/ogg). Use a Web Audio AnalyserNode to measure loudness every 50 ms: calibrate the room's noise
+  for the first 300 ms (threshold = clamp(noise x 2.5, 0.012, 0.05)), treat 250 ms above the threshold
+  as speech, and stop and send after 1.3 s of silence (or 25 s total). If nobody speaks for 15 s,
+  silently start a fresh recording. Never record while Sahayak is speaking. Pause listening while
+  typing, while the camera or scan overlay is open, and after the form is done. The mic button
+  pauses and resumes; its glow grows with the voice level. A "Nothing was heard" response just
+  restarts listening. If the mic is blocked, say so in the status line and keep typing available.
 - After every response: move the previous question into history, add the heard text, show any error,
   re-render the form, play audio_b64 as a data:audio/wav URL.
 - Use textContent (never innerHTML) for any text that comes from the server.
