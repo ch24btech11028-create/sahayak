@@ -36,7 +36,8 @@ def _respond(s: dict, turn: dict, timings: dict, heard: str | None = None) -> di
 @app.get("/api/config")
 def get_config():
     return {"mock": config.MOCK, "form_title": config.FORM["title"],
-            "languages": [{"code": c, "name": l["name"], "english": l["english"]}
+            "languages": [{"code": c, "name": l["name"], "english": l["english"],
+                           "speak": config.SPEAK_WORD.get(c, l["name"])}
                           for c, l in config.LANGUAGES.items()]}
 
 

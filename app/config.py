@@ -49,3 +49,10 @@ LANGUAGES = {
     "ml-IN": {"name": "മലയാളം", "english": "Malayalam", "tts_model": "bulbul:v3", "speaker": "priya"},
     "od-IN": {"name": "ଓଡ଼ିଆ", "english": "Odia", "tts_model": "bulbul:v3", "speaker": "priya"},
 }
+
+# "Speak" in each language, shown on the welcome screen so people can find theirs without English.
+SPEAK_WORD = {
+    "hi-IN": "बोलिए", "en-IN": "Speak", "te-IN": "మాట్లాడండి", "ta-IN": "பேசுங்கள்",
+    "kn-IN": "ಮಾತನಾಡಿ", "bn-IN": "বলুন", "mr-IN": "बोला", "gu-IN": "બોલો",
+    "pa-IN": "ਬੋਲੋ", "ml-IN": "സംസാരിക്കൂ", "od-IN": "କୁହନ୍ତୁ",
+}
