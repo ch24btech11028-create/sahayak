@@ -56,3 +56,4 @@ read-back with nothing left to change.
 | `static/` | Single-page UI: language picker, camera scan, push-to-talk, the live form |
 | `scripts/smoke_test.py` | Live check of every Sarvam call |
 | `docs/PITCH.md` | The pitch and a full explanation |
+| `docs/INDUS_BUILD.md` | Step-by-step instructions for Indus (Sarvam's coding agent) to rebuild Sahayak |
